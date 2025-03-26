@@ -73,7 +73,7 @@ static esp_err_t ws_request_handler(httpd_req_t *request) {
 
         if (response_message) {
             // Send the response message back to the client
-            websocket_send_message(client_fd, response_message);
+            websocket_send_message_to_all_clients(response_message);
             free(response_message);
         }
 
@@ -146,24 +146,40 @@ esp_err_t websocket_server_stop() {
     return ret;
 }
 
-esp_err_t websocket_send_message(const int client_fd, const char *message) {
+esp_err_t websocket_send_message_to_all_clients(const char *message) {
+    ESP_LOGI(TAG, "Sending message to all clients: %s", message);
+
     if (!server) {
         ESP_LOGE(TAG, "WebSocket server is not running");
         return ESP_FAIL;
     }
 
+    if (!message) {
+        ESP_LOGE(TAG, "Message is NULL");
+        return ESP_ERR_INVALID_ARG;
+    }
+
     // Prepare the WebSocket frame
+    ESP_LOGI(TAG, "Preparing WebSocket frame");
     httpd_ws_frame_t frame = {
         .type = HTTPD_WS_TYPE_TEXT,
         .payload = reinterpret_cast<uint8_t *>(const_cast<char *>(message)),
         .len = strlen(message)
     };
 
-    // Send the WebSocket frame asynchronously
-    const esp_err_t ret = httpd_ws_send_frame_async(server, client_fd, &frame);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to send WebSocket message: %s", esp_err_to_name(ret));
+    // Get list of all connected clients and send message
+    ESP_LOGI(TAG, "Getting list of connected clients");
+    websocket_client_t *client;
+    LIST_FOREACH(client, &clients, entries) {
+        ESP_LOGI(TAG, "Sending message to client FD: %d", client->fd);
+
+        esp_err_t ret = httpd_ws_send_frame_async(server, client->fd, &frame);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to send message to client FD %d: %s", client->fd, esp_err_to_name(ret));
+        } else {
+            ESP_LOGI(TAG, "Message sent to client FD: %d", client->fd);
+        }
     }
 
-    return ret;
+    return ESP_OK;
 }

@@ -17,8 +17,8 @@ extern "C" {
     // Stop the WebSocket server
     esp_err_t websocket_server_stop();
 
-    // Send a message to a WebSocket client
-    esp_err_t websocket_send_message(int client_fd, const char *message);
+    // Send a message to all WebSocket clients
+    esp_err_t websocket_send_message_to_all_clients(const char *message);
 
 #ifdef __cplusplus
 }

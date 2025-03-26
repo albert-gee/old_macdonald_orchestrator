@@ -16,7 +16,6 @@
 #include "openthread/logging.h"
 
 #include "thread_interface.h"
-#include "thread_events.h"
 #include "thread_netif.h"
 
 // Task handle for the OpenThread main task

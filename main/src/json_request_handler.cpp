@@ -1,4 +1,5 @@
 #include "json_request_handler.h"
+#include "json_response.h"
 
 #include <cJSON.h>
 #include <esp_log.h>
@@ -8,58 +9,72 @@
 static const char *TAG = "JSON_PARSER";
 static const char *AUTH_TOKEN = "secret_token_123";
 
+/**
+ * @brief Handles authenticated commands.
+ */
 static esp_err_t handle_command(const cJSON *root, char **response_message) {
     if (!root) {
-        ESP_LOGE(TAG, "Invalid arguments");
+        ESP_LOGE(TAG, "Invalid JSON root object");
         return ESP_ERR_INVALID_ARG;
     }
 
-    cJSON *response = cJSON_CreateObject();
-
-    // Check for the presence of the command in the request
+    // Check for "command" field
     cJSON *command = cJSON_GetObjectItem(root, "command");
-    if (!cJSON_IsString(command)) {
-        ESP_LOGE(TAG, "Missing or invalid 'command' in the payload");
-        cJSON_AddStringToObject(response, "command", "error");
-        cJSON_AddStringToObject(response, "payload", "Invalid command");
+    if (!command || !cJSON_IsString(command)) {
+        *response_message = create_json_error_response("Invalid command format");
         return ESP_FAIL;
     }
 
-    // init_thread_network command
+    // Handle "init_thread_network" command
     if (strcmp(command->valuestring, "init_thread_network") == 0) {
         cJSON *payload = cJSON_GetObjectItem(root, "payload");
-        if (cJSON_IsString(payload)) {
-            ESP_LOGI(TAG, "Received payload: %s", payload->valuestring);
-
-            // Generate thread dataset
-            const char* dataset = thread_dataset_init_new();
-            if (dataset) {
-                ESP_LOGI(TAG, "Generated Dataset: %s", dataset);
-                cJSON_AddStringToObject(response, "command", "init_thread_network");
-                cJSON_AddStringToObject(response, "payload", dataset);
-            } else {
-                cJSON_AddStringToObject(response, "command", "error");
-                cJSON_AddStringToObject(response, "payload", "Failed to generate dataset");
-                ESP_LOGE(TAG, "Failed to generate dataset TLVs.");
-            }
-
-        } else {
-            ESP_LOGE(TAG, "Invalid payload format");
-            cJSON_AddStringToObject(response, "command", "error");
-            cJSON_AddStringToObject(response, "payload", "Invalid payload format");
-
-            *response_message = cJSON_PrintUnformatted(response);
+        if (!cJSON_IsObject(payload)) {
+            *response_message = create_json_error_response("Invalid payload format");
             return ESP_FAIL;
         }
+
+        // Extract values
+        const cJSON *channel = cJSON_GetObjectItem(payload, "channel");
+        const cJSON *pan_id = cJSON_GetObjectItem(payload, "pan_id");
+        const cJSON *network_name = cJSON_GetObjectItem(payload, "network_name");
+        const cJSON *extended_pan_id = cJSON_GetObjectItem(payload, "extended_pan_id");
+        const cJSON *mesh_local_prefix = cJSON_GetObjectItem(payload, "mesh_local_prefix");
+        const cJSON *master_key = cJSON_GetObjectItem(payload, "master_key");
+        const cJSON *pskc = cJSON_GetObjectItem(payload, "pskc");
+
+        // Validate required parameters
+        if (!cJSON_IsNumber(channel) || !cJSON_IsNumber(pan_id) ||
+            !cJSON_IsString(network_name) || !cJSON_IsString(extended_pan_id) ||
+            !cJSON_IsString(mesh_local_prefix) || !cJSON_IsString(master_key) ||
+            !cJSON_IsString(pskc)) {
+            *response_message = create_json_error_response("Invalid or missing fields in payload");
+            return ESP_FAIL;
+        }
+
+        // Call thread_dataset_init
+        esp_err_t err = thread_dataset_init(
+            (uint16_t)channel->valueint,
+            (uint16_t)pan_id->valueint,
+            network_name->valuestring,
+            extended_pan_id->valuestring,
+            mesh_local_prefix->valuestring,
+            master_key->valuestring,
+            pskc->valuestring
+        );
+
+        if (err != ESP_OK) {
+            *response_message = create_json_error_response("Failed to initialize Thread dataset");
+            return err;
+        }
+
+        *response_message = create_json_info_response("Thread dataset initialized successfully");
     } else {
-        ESP_LOGE(TAG, "Unknown command: %s", command->valuestring);
-        cJSON_AddStringToObject(response, "command", "error");
-        cJSON_AddStringToObject(response, "payload", "Unknown command");
+        *response_message = create_json_error_response("Unknown command");
     }
 
-    *response_message = cJSON_PrintUnformatted(response);
     return ESP_OK;
 }
+
 
 static esp_err_t handle_unauthenticated_request(const cJSON *root, char **response_message) {
     ESP_LOGI(TAG, "Received unauthenticated request");
@@ -70,48 +85,48 @@ static esp_err_t handle_unauthenticated_request(const cJSON *root, char **respon
         return ESP_ERR_INVALID_ARG;
     }
 
-    cJSON *response = cJSON_CreateObject();
-
-    ESP_LOGI(TAG, "Parsing token");
-    // Check for the presence of the token in the request and validate it
-    cJSON *token = cJSON_GetObjectItem(root, "token");
-    if (cJSON_IsString(token) && strcmp(token->valuestring, AUTH_TOKEN) == 0) {
-        ESP_LOGI(TAG, "Authentication successful");
-        cJSON_AddStringToObject(response, "command", "auth");
-        cJSON_AddStringToObject(response, "payload", "success");
-        *response_message = cJSON_PrintUnformatted(response);
-        return ESP_OK;
+    // Check for "command" field
+    cJSON *command = cJSON_GetObjectItem(root, "command");
+    if (!command || !cJSON_IsString(command)) {
+        *response_message = create_json_error_response("Invalid command format");
+        return ESP_FAIL;
     }
 
-    ESP_LOGI(TAG, "Authentication failed");
-    cJSON_AddStringToObject(response, "command", "error");
-    cJSON_AddStringToObject(response, "payload", "Invalid token");
-    *response_message = cJSON_PrintUnformatted(response);
+    // Command is "auth"
+    if (strcmp(command->valuestring, "auth") == 0) {
+        cJSON *code = cJSON_GetObjectItem(root, "payload");
+        if (cJSON_IsString(code) && strcmp(code->valuestring, AUTH_TOKEN) == 0) {
+            *response_message = create_json_info_response("Authenticated successfully");
+            return ESP_OK;
+        }
+        *response_message = create_json_error_response("Invalid auth code");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    *response_message = create_json_error_response("Unauthenticated. Invalid command");
     return ESP_ERR_INVALID_STATE;
 }
 
-esp_err_t handle_request(char *request_message, char **response_message, const bool isAuthenticated) {
-    ESP_LOGI(TAG, "Preparing to parse WebSocket request");
-
+/**
+ * @brief Handles WebSocket JSON requests.
+ */
+esp_err_t handle_request(char *request_message, char **response_message, bool isAuthenticated) {
     if (!request_message || !response_message) {
         ESP_LOGE(TAG, "Invalid arguments, request_message or response_message is NULL");
         return ESP_ERR_INVALID_ARG;
     }
 
-    ESP_LOGI(TAG, "Parsing WebSocket request: %s", request_message);
     cJSON *root = cJSON_Parse(request_message);
     if (!root) {
-        const char *error = cJSON_GetErrorPtr();
-        ESP_LOGE(TAG, "Parse error near: %s", error ? error : "unknown");
+        ESP_LOGE(TAG, "JSON parsing failed");
+        *response_message = create_json_error_response("Invalid JSON format");
         return ESP_FAIL;
     }
-    ESP_LOGI(TAG, "Parsed JSON: %s", cJSON_Print(root));
 
     const esp_err_t ret = (isAuthenticated)
                               ? handle_command(root, response_message)
                               : handle_unauthenticated_request(root, response_message);
 
-    cJSON_Delete(root);
-
+    cJSON_Delete(root); // Free the parsed JSON object
     return ret;
 }

@@ -3,6 +3,8 @@
 
 #include <sys/queue.h>
 #include <freertos/FreeRTOS.h>
+#include <stdbool.h>
+#include <freertos/semphr.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -15,6 +17,13 @@ extern "C" {
         TickType_t connect_time;    // Timestamp when the client connected
         LIST_ENTRY(websocket_client) entries; // Linked list entry
     } websocket_client_t;
+
+    // Define LIST_HEAD here so other files see its structure
+    LIST_HEAD(client_list, websocket_client);
+
+    // Declare it as extern so only one definition exists
+    extern struct client_list clients;
+    extern SemaphoreHandle_t client_mutex;
 
     // Initialize the client management system
     void websocket_client_init();

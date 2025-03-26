@@ -8,9 +8,9 @@
 
 static const char *TAG = "WS_CLIENT";
 
-static LIST_HEAD(client_list, websocket_client) clients = LIST_HEAD_INITIALIZER(clients);
+client_list clients = LIST_HEAD_INITIALIZER(clients);
 static StaticSemaphore_t mutex_buffer;
-static SemaphoreHandle_t client_mutex;
+SemaphoreHandle_t client_mutex; // No 'static' since it's extern in the header
 
 void websocket_client_init() {
     client_mutex = xSemaphoreCreateMutexStatic(&mutex_buffer);
@@ -21,7 +21,6 @@ void websocket_client_init() {
     LIST_INIT(&clients);
     ESP_LOGI(TAG, "Client management system initialized");
 }
-
 void websocket_client_add(const int fd) {
     auto *client = static_cast<websocket_client_t *>(malloc(sizeof(websocket_client_t)));
     if (!client) {
