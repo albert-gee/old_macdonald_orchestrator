@@ -9,6 +9,7 @@
 #include <esp_matter_controller_console.h>
 
 #include <esp_ot_config.h>
+#include "json_request_handler.h"
 
 #if CONFIG_OPENTHREAD_BORDER_ROUTER
 #include <esp_openthread_border_router.h>
@@ -43,7 +44,21 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg) {
                 // Wi-Fi STA started. Connect to AP
                 if (event->Platform.ESPSystemEvent.Id == WIFI_EVENT_STA_START) {
                     ESP_LOGI(TAG, "Wi-Fi Started: connecting...");
-                    esp_err_t ret = esp_wifi_connect();
+
+                    esp_err_t ret;
+
+                    wifi_config_t wifi_cfg = {};
+                    snprintf((char *)wifi_cfg.sta.ssid, sizeof(wifi_cfg.sta.ssid), "%s", "SkyNet_Guest");
+                    snprintf((char *)wifi_cfg.sta.password, sizeof(wifi_cfg.sta.password), "%s", "password147");
+                    wifi_cfg.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+                    wifi_cfg.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
+
+                    ret = esp_wifi_set_config(WIFI_IF_STA, &wifi_cfg);
+                    if (ret != ESP_OK) {
+                        ESP_LOGE(TAG, "Failed to set Wi-Fi configuration: %s", esp_err_to_name(ret));
+                    }
+
+                    ret = esp_wifi_connect();
 
                     if (ret == ESP_OK) {
                         ESP_LOGI(TAG, "Wi-Fi Connected");
@@ -67,10 +82,9 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg) {
                     // Wi-Fi STA connected. Start WebSocket server
 
                     ESP_LOGI(TAG, "Wi-Fi STA Connected. Starting WebSocket server...");
-                    esp_err_t err = websocket_server_start();
+                    esp_err_t err = websocket_server_start(handle_request);
                     if (err != ESP_OK) {
                         ESP_LOGE(TAG, "Failed to start WebSocket server, err:%d", err);
-                        return;
                     }
                     ESP_LOGI(TAG, "WebSocket server started");
 
@@ -81,7 +95,6 @@ static void app_event_cb(const ChipDeviceEvent *event, intptr_t arg) {
                     esp_err_t err = websocket_server_stop();
                     if (err != ESP_OK) {
                         ESP_LOGE(TAG, "Failed to stop WebSocket server, err:%d", err);
-                        return;
                     }
                 }
 

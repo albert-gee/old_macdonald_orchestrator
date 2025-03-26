@@ -1,6 +1,5 @@
 #include "websocket_server.h"
 #include "websocket_client.h"
-#include "json_request_handler.h"
 #include <esp_log.h>
 #include <cstdlib>
 #include <cstring>
@@ -9,6 +8,9 @@ static const char *TAG = "WS_SERVER";
 static httpd_handle_t server = nullptr;
 
 #define WEBSOCKET_SERVER_URI "/ws"
+
+// Function pointer for the JSON request handler
+static json_request_handler_t json_request_handler_fun = nullptr;
 
 static esp_err_t ws_request_handler(httpd_req_t *request) {
 
@@ -59,7 +61,7 @@ static esp_err_t ws_request_handler(httpd_req_t *request) {
         // Call the message handler
         char *response_message = nullptr;
         const bool isAuthenticated = websocket_client_is_authenticated(client_fd);
-        ret = handle_request(reinterpret_cast<const char *>(ws_frame.payload), &response_message, isAuthenticated);
+        ret = json_request_handler_fun(reinterpret_cast<char *>(ws_frame.payload), &response_message, isAuthenticated);
         if (ret == ESP_OK) {
             if (!isAuthenticated) {
                 // Authenticate the client
@@ -86,11 +88,13 @@ static esp_err_t ws_request_handler(httpd_req_t *request) {
     return ret;
 }
 
-esp_err_t websocket_server_start() {
+esp_err_t websocket_server_start(const json_request_handler_t json_request_handler) {
     if (server) {
         ESP_LOGE(TAG, "WebSocket server is already running");
         return ESP_FAIL;
     }
+
+    json_request_handler_fun = json_request_handler;
 
     // Initialize the WebSocket client management system
     websocket_client_init();

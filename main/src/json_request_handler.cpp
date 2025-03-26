@@ -3,6 +3,7 @@
 #include <cJSON.h>
 #include <esp_log.h>
 #include <cstring>
+#include <thread_util.h>
 
 static const char *TAG = "JSON_PARSER";
 static const char *AUTH_TOKEN = "secret_token_123";
@@ -29,6 +30,19 @@ static esp_err_t handle_command(const cJSON *root, char **response_message) {
         cJSON *payload = cJSON_GetObjectItem(root, "payload");
         if (cJSON_IsString(payload)) {
             ESP_LOGI(TAG, "Received payload: %s", payload->valuestring);
+
+            // Generate thread dataset
+            const char* dataset = thread_dataset_init_new();
+            if (dataset) {
+                ESP_LOGI(TAG, "Generated Dataset: %s", dataset);
+                cJSON_AddStringToObject(response, "command", "init_thread_network");
+                cJSON_AddStringToObject(response, "payload", dataset);
+            } else {
+                cJSON_AddStringToObject(response, "command", "error");
+                cJSON_AddStringToObject(response, "payload", "Failed to generate dataset");
+                ESP_LOGE(TAG, "Failed to generate dataset TLVs.");
+            }
+
         } else {
             ESP_LOGE(TAG, "Invalid payload format");
             cJSON_AddStringToObject(response, "command", "error");
@@ -36,17 +50,6 @@ static esp_err_t handle_command(const cJSON *root, char **response_message) {
 
             *response_message = cJSON_PrintUnformatted(response);
             return ESP_FAIL;
-        }
-
-        const char *dataset = "Simulated Dataset TLVs";
-        if (dataset) {
-            ESP_LOGI(TAG, "Generated Dataset TLVs: %s", dataset);
-            cJSON_AddStringToObject(response, "command", "init_thread_network");
-            cJSON_AddStringToObject(response, "payload", dataset);
-        } else {
-            cJSON_AddStringToObject(response, "command", "error");
-            cJSON_AddStringToObject(response, "payload", "Failed to generate dataset");
-            ESP_LOGE(TAG, "Failed to generate dataset TLVs.");
         }
     } else {
         ESP_LOGE(TAG, "Unknown command: %s", command->valuestring);
@@ -87,7 +90,7 @@ static esp_err_t handle_unauthenticated_request(const cJSON *root, char **respon
     return ESP_ERR_INVALID_STATE;
 }
 
-esp_err_t handle_request(const char *request_message, char **response_message, const bool isAuthenticated) {
+esp_err_t handle_request(char *request_message, char **response_message, const bool isAuthenticated) {
     ESP_LOGI(TAG, "Preparing to parse WebSocket request");
 
     if (!request_message || !response_message) {

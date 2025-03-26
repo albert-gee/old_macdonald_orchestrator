@@ -10,6 +10,7 @@
 
 #include "thread_util.h"
 
+#include <esp_openthread.h>
 #include <portmacro.h>
 #include <string.h>
 
@@ -53,29 +54,28 @@ static size_t hex_string_to_binary(const char *hex_string, uint8_t *buf, size_t 
 }
 
 const char *thread_dataset_init_new() {
-    static char dataset_tlvs_hex[512];  // Buffer to store TLV hex string
     ESP_LOGI(TAG, "Initializing new OpenThread dataset");
 
-    openThreadInstance = otInstanceInitSingle();
-    if (openThreadInstance == NULL) {
-        ESP_LOGE(TAG, "Failed to initialize OpenThread instance");
-        return NULL;
+    openThreadInstance = esp_openthread_get_instance();
+    if (openThreadInstance == nullptr) {
+        ESP_LOGE(TAG, "OpenThread instance is not initialized");
+        return nullptr;
     }
 
-    otOperationalDataset dataset;
-    memset(&dataset, 0, sizeof(otOperationalDataset));
+     otOperationalDataset dataset;
+     memset(&dataset, 0, sizeof(otOperationalDataset));
 
-    esp_openthread_lock_acquire(portMAX_DELAY);
+     esp_openthread_lock_acquire(portMAX_DELAY);
 
-#if CONFIG_OPENTHREAD_FTD
-    if (otDatasetCreateNewNetwork(openThreadInstance, &dataset) != OT_ERROR_NONE) {
-        ESP_LOGE(TAG, "Failed to create a new OpenThread dataset");
-        esp_openthread_lock_release();
-        return NULL;
-    }
-#endif
+// #if CONFIG_OPENTHREAD_FTD
+//     if (otDatasetCreateNewNetwork(openThreadInstance, &dataset) != OT_ERROR_NONE) {
+//         ESP_LOGE(TAG, "Failed to create a new OpenThread dataset");
+//         esp_openthread_lock_release();
+//         return NULL;
+//     }
+// #endif
 
-    // Active timestamp
+     // Active timestamp
     dataset.mActiveTimestamp.mSeconds = 1;
     dataset.mActiveTimestamp.mTicks = 0;
     dataset.mActiveTimestamp.mAuthoritative = false;
@@ -140,25 +140,13 @@ const char *thread_dataset_init_new() {
     // Apply dataset
     if (otDatasetSetActive(openThreadInstance, &dataset) != OT_ERROR_NONE) {
         ESP_LOGE(TAG, "Failed to set OpenThread active dataset");
-        esp_openthread_lock_release();
         return NULL;
     }
-
-    // **FIX: Use otOperationalDatasetTlvs struct instead of uint8_t buffer**
-    otOperationalDatasetTlvs datasetTlvs;
-    memset(&datasetTlvs, 0, sizeof(otOperationalDatasetTlvs));
-
-    otDatasetConvertToTlvs(&dataset, &datasetTlvs);
-
-    // Convert TLVs to hex string
-    for (int i = 0; i < datasetTlvs.mLength; i++) {
-        snprintf(&dataset_tlvs_hex[i * 2], 3, "%02X", datasetTlvs.mTlvs[i]);
-    }
+    ESP_LOGI(TAG, "Successfully set OpenThread active dataset");
 
     esp_openthread_lock_release();
 
-    ESP_LOGI(TAG, "Dataset TLVs: %s", dataset_tlvs_hex);
-    return dataset_tlvs_hex;
+    return "<<uninitialize>>";
 }
 
 // Enable OpenThread IPv6

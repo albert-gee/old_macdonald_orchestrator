@@ -15,7 +15,7 @@ extern "C" {
  * @param isAuthenticated Indicates if the client is authenticated.
  * @return ESP_OK on success, or an error code on failure.
  */
-esp_err_t handle_request(const char *request_message, char **response_message, bool isAuthenticated);
+esp_err_t handle_request(char *request_message, char **response_message, bool isAuthenticated);
 
 #ifdef __cplusplus
 }
