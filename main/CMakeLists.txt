@@ -1,6 +1,7 @@
 idf_component_register(
         SRC_DIRS "src"
         INCLUDE_DIRS "include"
+        LDFRAGMENTS "linker.lf" # https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-guides/linker-script-generation.html
 )
 
 if (CONFIG_SPIFFS_ATTESTATION_TRUST_STORE)

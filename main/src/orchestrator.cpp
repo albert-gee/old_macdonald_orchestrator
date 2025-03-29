@@ -1,6 +1,5 @@
 #include "event_handler.h"
 #include "esp_ot_config.h"
-#include "websocket_server.h"
 
 #include <esp_err.h>
 #include <esp_log.h>
@@ -16,14 +15,14 @@
 #include <esp_wifi.h>
 #include <portmacro.h>
 
-static const char *TAG = "MAIN";
+static const char *TAG = "ORCHESTRATOR";
 
 #define MATTER_CONTROLLER_NODE_ID 1234
 #define MATTER_CONTROLLER_FABRIC_ID 1
 #define MATTER_CONTROLLER_LISTEN_PORT 5580
 
 extern "C" void app_main() {
-    // Initialize the ESP NVS layer
+    // Initialize ESP NVS layer
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -31,10 +30,45 @@ extern "C" void app_main() {
     }
     ESP_ERROR_CHECK(err);
 
+    // Configure OpenThread Border Router
+#ifdef CONFIG_OPENTHREAD_BORDER_ROUTER
+
+#ifdef CONFIG_AUTO_UPDATE_RCP
+    ESP_LOGI(TAG, "Registering RCP firmware storage and initializing OpenThread RCP");
+    esp_vfs_spiffs_conf_t rcp_fw_conf = {
+        .base_path = "/rcp_fw", .partition_label = "rcp_fw", .max_files = 10, .format_if_mount_failed = false};
+    if (ESP_OK != esp_vfs_spiffs_register(&rcp_fw_conf)) {
+        ESP_LOGE(TAG, "Failed to mount rcp firmware storage");
+        return;
+    }
+    esp_rcp_update_config_t rcp_update_config = ESP_OPENTHREAD_RCP_UPDATE_CONFIG();
+    openthread_init_br_rcp(&rcp_update_config);
+#endif
+
+    ESP_LOGI(TAG, "Setting OpenThread Default Configuration");
+    /* Set OpenThread platform config */
+    esp_openthread_platform_config_t config = ESP_OPENTHREAD_DEFAULT_CONFIG();
+    set_openthread_platform_config(&config);
+#endif // CONFIG_OPENTHREAD_BORDER_ROUTER
+
+    // Start the Matter stack
+    err = esp_matter::start(handle_chip_device_event);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start Matter stack");
+        return;
+    }
+    ESP_LOGI(TAG, "Matter stack started successfully");
+
+
+    // Register the event handler
+    esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, handle_wifi_event, nullptr);
+    esp_event_handler_register(OPENTHREAD_EVENT, ESP_EVENT_ANY_ID, handle_thread_event, nullptr);
+
 
     // Matter CLI commands
 #if CONFIG_ENABLE_CHIP_SHELL
     esp_matter::console::diagnostics_register_commands();
+    esp_matter::console::wifi_register_commands();
     esp_matter::console::factoryreset_register_commands();
     esp_matter::console::init();
 
@@ -50,39 +84,13 @@ extern "C" void app_main() {
 
 #endif
 
-    // Configure OpenThread Border Router
-#ifdef CONFIG_OPENTHREAD_BORDER_ROUTER
-#ifdef CONFIG_AUTO_UPDATE_RCP
-        esp_vfs_spiffs_conf_t rcp_fw_conf = {
-            .base_path = "/rcp_fw", .partition_label = "rcp_fw", .max_files = 10, .format_if_mount_failed = false};
-        if (ESP_OK != esp_vfs_spiffs_register(&rcp_fw_conf)) {
-            ESP_LOGE(TAG, "Failed to mount rcp firmware storage");
-            return;
-        }
-        esp_rcp_update_config_t rcp_update_config = ESP_OPENTHREAD_RCP_UPDATE_CONFIG();
-        openthread_init_br_rcp(&rcp_update_config);
-#endif
-    /* Set OpenThread platform config */
-    esp_openthread_platform_config_t config = ESP_OPENTHREAD_DEFAULT_CONFIG();
-    set_openthread_platform_config(&config);
-#endif // CONFIG_OPENTHREAD_BORDER_ROUTER
-
-    // Start the Matter stack
-    err = esp_matter::start(handle_chip_device_event);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to start Matter stack");
-        return;
-    }
-    ESP_LOGI(TAG, "Matter stack started successfully");
-
-    esp_event_handler_register(OPENTHREAD_EVENT, ESP_EVENT_ANY_ID, handle_thread_event, nullptr);
-
 
     // Locking the Matter thread
     esp_matter::lock::chip_stack_lock(portMAX_DELAY);
 
     // Initialize the Matter controller client
-    err = esp_matter::controller::matter_controller_client::get_instance().init(MATTER_CONTROLLER_NODE_ID, MATTER_CONTROLLER_FABRIC_ID, MATTER_CONTROLLER_LISTEN_PORT);
+    err = esp_matter::controller::matter_controller_client::get_instance().init(
+        MATTER_CONTROLLER_NODE_ID, MATTER_CONTROLLER_FABRIC_ID, MATTER_CONTROLLER_LISTEN_PORT);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to initialize Matter controller client");
         return;

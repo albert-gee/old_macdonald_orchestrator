@@ -13,37 +13,36 @@
 
 static const char *TAG = "THREAD_UTIL";
 
-static int hex_digit_to_int(unsigned char hex) {
-    if (hex >= '0' && hex <= '9') {
+
+static int hex_digit_to_int(char hex)
+{
+    if ('A' <= hex && hex <= 'F') {
+        return 10 + hex - 'A';
+    }
+    if ('a' <= hex && hex <= 'f') {
+        return 10 + hex - 'a';
+    }
+    if ('0' <= hex && hex <= '9') {
         return hex - '0';
     }
-    if (hex >= 'A' && hex <= 'F') {
-        return hex - 'A' + 10;
-    }
-    if (hex >= 'a' && hex <= 'f') {
-        return hex - 'a' + 10;
-    }
-    return -1;  // Invalid hex character
+    return -1;
 }
 
-static size_t hex_string_to_binary(const char *hex_string, uint8_t *buf, size_t buf_size) {
-    if (!hex_string || !buf) {
+static size_t hex_string_to_binary(const char *hex_string, uint8_t *buf, size_t buf_size)
+{
+    int num_char = strlen(hex_string);
+
+    if (num_char != buf_size * 2) {
         return 0;
     }
-
-    const size_t num_char = strlen(hex_string);
-    if (num_char != buf_size * 2 || num_char % 2 != 0) {
-        return 0; // Must be exactly 2 * buf_size characters
-    }
-
     for (size_t i = 0; i < num_char; i += 2) {
-        const int digit0 = hex_digit_to_int(static_cast<unsigned char>(hex_string[i]));
-        const int digit1 = hex_digit_to_int(static_cast<unsigned char>(hex_string[i + 1]));
+        int digit0 = hex_digit_to_int(hex_string[i]);
+        int digit1 = hex_digit_to_int(hex_string[i + 1]);
 
         if (digit0 < 0 || digit1 < 0) {
-            return 0; // Invalid hex digit found
+            return 0;
         }
-        buf[i / 2] = static_cast<uint8_t>((digit0 << 4) | digit1);
+        buf[i / 2] = (digit0 << 4) + digit1;
     }
 
     return buf_size;
@@ -51,23 +50,22 @@ static size_t hex_string_to_binary(const char *hex_string, uint8_t *buf, size_t 
 
 esp_err_t thread_dataset_init(const uint16_t channel, const uint16_t pan_id, const char *network_name,
                               const char *extended_pan_id, const char *mesh_local_prefix,
-                              const char *master_key, const char *pskc) {
-    if (!network_name || !extended_pan_id || !mesh_local_prefix || !master_key || !pskc) {
+                              const char *network_key, const char *pskc) {
+
+
+    // Acquire OpenThread lock
+    esp_openthread_lock_acquire(portMAX_DELAY);
+    ESP_LOGI(TAG, "Acquired OpenThread lock to set dataset");
+
+    if (!network_name || !extended_pan_id || !mesh_local_prefix || !network_key || !pskc) {
         ESP_LOGE(TAG, "Invalid input parameters (NULL pointers)");
         return ESP_ERR_INVALID_ARG;
     }
 
     ESP_LOGI(TAG, "Initializing new OpenThread dataset");
-
-    otInstance *openThreadInstance = esp_openthread_get_instance();
-    ESP_RETURN_ON_ERROR(openThreadInstance ? ESP_OK : ESP_FAIL, TAG, "OpenThread instance is not initialized");
-
-    otOperationalDataset dataset = {0};
+    otOperationalDataset dataset;
     otIp6Prefix prefix;
     otError ot_err;
-
-    // Acquire OpenThread lock
-    esp_openthread_lock_acquire(portMAX_DELAY);
 
     // Set Active Timestamp
     dataset.mActiveTimestamp.mSeconds = 1;
@@ -90,6 +88,7 @@ esp_err_t thread_dataset_init(const uint16_t channel, const uint16_t pan_id, con
     memset(dataset.mNetworkName.m8, 0, sizeof(dataset.mNetworkName.m8));
     snprintf(static_cast<char *>(dataset.mNetworkName.m8), sizeof(dataset.mNetworkName.m8), "%s", network_name);
     dataset.mComponents.mIsNetworkNamePresent = true;
+    ESP_LOGI(TAG, "Network Name: %s", dataset.mNetworkName.m8);
 
     // Set Extended PAN ID
     if (hex_string_to_binary(extended_pan_id, dataset.mExtendedPanId.m8, sizeof(dataset.mExtendedPanId.m8)) != sizeof(
@@ -99,6 +98,7 @@ esp_err_t thread_dataset_init(const uint16_t channel, const uint16_t pan_id, con
         return ESP_ERR_INVALID_ARG;
     }
     dataset.mComponents.mIsExtendedPanIdPresent = true;
+    ESP_LOGI(TAG, "Extended PAN ID: %s", extended_pan_id);
 
     // Set Mesh Local Prefix
     memset(&prefix, 0, sizeof(otIp6Prefix));
@@ -109,15 +109,17 @@ esp_err_t thread_dataset_init(const uint16_t channel, const uint16_t pan_id, con
     }
     memcpy(dataset.mMeshLocalPrefix.m8, prefix.mPrefix.mFields.m8, sizeof(dataset.mMeshLocalPrefix.m8));
     dataset.mComponents.mIsMeshLocalPrefixPresent = true;
+    ESP_LOGI(TAG, "Mesh Local Prefix: %s", mesh_local_prefix);
 
     // Set Network Key
-    if (hex_string_to_binary(master_key, dataset.mNetworkKey.m8, sizeof(dataset.mNetworkKey.m8)) != sizeof(dataset.
+    if (hex_string_to_binary(network_key, dataset.mNetworkKey.m8, sizeof(dataset.mNetworkKey.m8)) != sizeof(dataset.
             mNetworkKey.m8)) {
         ESP_LOGE(TAG, "Invalid master key format");
         esp_openthread_lock_release();
         return ESP_ERR_INVALID_ARG;
     }
     dataset.mComponents.mIsNetworkKeyPresent = true;
+    ESP_LOGI(TAG, "Network Key: %s", network_key);
 
     // Set PSKc
     if (hex_string_to_binary(pskc, dataset.mPskc.m8, sizeof(dataset.mPskc.m8)) != sizeof(dataset.mPskc.m8)) {
@@ -127,13 +129,25 @@ esp_err_t thread_dataset_init(const uint16_t channel, const uint16_t pan_id, con
     }
     dataset.mComponents.mIsPskcPresent = true;
 
+
+
+
+
+    otInstance *openThreadInstance = esp_openthread_get_instance();
+    ESP_RETURN_ON_ERROR(openThreadInstance ? ESP_OK : ESP_FAIL, TAG, "OpenThread instance is not initialized");
+    otInstance *instance = esp_openthread_get_instance();
+    if (!instance) {
+        ESP_LOGE(TAG, "OpenThread instance is NULL");
+        return ESP_ERR_INVALID_STATE;
+    }
+    ESP_LOGI(TAG, "OpenThread instance is valid");
+
     // Apply dataset
     if ((ot_err = otDatasetSetActive(openThreadInstance, &dataset)) != OT_ERROR_NONE) {
         ESP_LOGE(TAG, "Failed to set active dataset (error: %d)", ot_err);
         esp_openthread_lock_release();
         return ESP_ERR_INVALID_STATE;
     }
-
     ESP_LOGI(TAG, "Successfully initialized OpenThread dataset");
     esp_openthread_lock_release();
 
@@ -208,46 +222,27 @@ esp_err_t thread_stop() {
     return ESP_OK;
 }
 
-esp_err_t thread_get_device_role_name(const char *device_role_name) {
-
+esp_err_t thread_get_device_role_name(char *device_role_name) {
     otInstance *openThreadInstance = esp_openthread_get_instance();
-    ESP_RETURN_ON_ERROR(openThreadInstance ? ESP_OK : ESP_FAIL, TAG, "OpenThread instance is not initialized");
-
-    otDeviceRole role = otThreadGetDeviceRole(openThreadInstance);
-    esp_err_t ret = ESP_OK;
-
-    if (role == OT_DEVICE_ROLE_DISABLED) {
-        ESP_LOGI(TAG, "Device Role: Disabled");
-        if (device_role_name != NULL) {
-            snprintf(const_cast<char *>(device_role_name), strlen("Disabled") + 1, "Disabled");
-        }
-    } else if (role == OT_DEVICE_ROLE_DETACHED) {
-        ESP_LOGI(TAG, "Device Role: Detached");
-        if (device_role_name != NULL) {
-            snprintf(const_cast<char *>(device_role_name), strlen("Detached") + 1, "Detached");
-        }
-    } else if (role == OT_DEVICE_ROLE_CHILD) {
-        ESP_LOGI(TAG, "Device Role: Child");
-        if (device_role_name != NULL) {
-            snprintf(const_cast<char *>(device_role_name), strlen("Child") + 1, "Child");
-        }
-    } else if (role == OT_DEVICE_ROLE_ROUTER) {
-        ESP_LOGI(TAG, "Device Role: Router");
-        if (device_role_name != NULL) {
-            snprintf(const_cast<char *>(device_role_name), strlen("Router") + 1, "Router");
-        }
-    } else if (role == OT_DEVICE_ROLE_LEADER) {
-        ESP_LOGI(TAG, "Device Role: Leader");
-        if (device_role_name != NULL) {
-            snprintf(const_cast<char *>(device_role_name), strlen("Leader") + 1, "Leader");
-        }
-    } else {
-        ESP_LOGE(TAG, "Unknown device role: %d", role);
-        ret = ESP_ERR_INVALID_STATE;
+    if (!openThreadInstance) {
+        return ESP_FAIL;
     }
 
-    return ret;
+    otDeviceRole role = otThreadGetDeviceRole(openThreadInstance);
+
+    const char *role_str = "Unknown";
+    switch (role) {
+        case OT_DEVICE_ROLE_DISABLED: role_str = "Disabled"; break;
+        case OT_DEVICE_ROLE_DETACHED: role_str = "Detached"; break;
+        case OT_DEVICE_ROLE_CHILD: role_str = "Child"; break;
+        case OT_DEVICE_ROLE_ROUTER: role_str = "Router"; break;
+        case OT_DEVICE_ROLE_LEADER: role_str = "Leader"; break;
+    }
+
+    snprintf(device_role_name, 22, "%s", role_str);
+    return ESP_OK;
 }
+
 
 esp_err_t thread_get_active_dataset(otOperationalDataset *dataset) {
 

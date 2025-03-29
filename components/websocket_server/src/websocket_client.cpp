@@ -8,9 +8,11 @@
 
 static const char *TAG = "WS_CLIENT";
 
+LIST_HEAD(client_list, websocket_client);
 client_list clients = LIST_HEAD_INITIALIZER(clients);
+
 static StaticSemaphore_t mutex_buffer;
-SemaphoreHandle_t client_mutex; // No 'static' since it's extern in the header
+static SemaphoreHandle_t client_mutex;
 
 void websocket_client_init() {
     client_mutex = xSemaphoreCreateMutexStatic(&mutex_buffer);
@@ -101,20 +103,52 @@ bool websocket_client_is_authenticated(const int fd) {
     return ret;
 }
 
-void websocket_client_authenticate(int fd) {
+esp_err_t websocket_client_authenticate(int fd) {
+
     if (xSemaphoreTake(client_mutex, portMAX_DELAY) != pdTRUE) {
         ESP_LOGE(TAG, "Failed to take mutex in websocket_client_authenticate");
-        return;
+        return ESP_FAIL;
     }
 
+    ESP_LOGI(TAG, "Authenticating client with FD: %d", fd);
+
+    esp_err_t ret = ESP_FAIL;
     websocket_client_t *client;
     LIST_FOREACH(client, &clients, entries) {
         if (client->fd == fd) {
             client->authenticated = true;
             ESP_LOGI(TAG, "Client authenticated, FD: %d", fd);
+            ret = ESP_OK;
             break;
         }
     }
 
     xSemaphoreGive(client_mutex);
+
+    return ret;
+}
+
+esp_err_t websocket_client_for_each(websocket_client_callback_t callback, void* arg) {
+    if (callback == nullptr) {
+        ESP_LOGE(TAG, "Null callback provided to websocket_client_for_each");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (xSemaphoreTake(client_mutex, portMAX_DELAY) != pdTRUE) {
+        ESP_LOGE(TAG, "Failed to take mutex in websocket_client_for_each");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    esp_err_t overall_result = ESP_OK;
+    websocket_client_t* client;
+
+    LIST_FOREACH(client, &clients, entries) {
+        esp_err_t ret = callback(client, arg);
+        if (ret != ESP_OK && overall_result == ESP_OK) {
+            overall_result = ret;  // Return first error encountered
+        }
+    }
+
+    xSemaphoreGive(client_mutex);
+    return overall_result;
 }

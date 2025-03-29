@@ -18,12 +18,7 @@ extern "C" {
         LIST_ENTRY(websocket_client) entries; // Linked list entry
     } websocket_client_t;
 
-    // Define LIST_HEAD here so other files see its structure
-    LIST_HEAD(client_list, websocket_client);
-
-    // Declare it as extern so only one definition exists
     extern struct client_list clients;
-    extern SemaphoreHandle_t client_mutex;
 
     // Initialize the client management system
     void websocket_client_init();
@@ -41,7 +36,14 @@ extern "C" {
     bool websocket_client_is_authenticated(int fd);
 
     // Mark a client as authenticated
-    void websocket_client_authenticate(int fd);
+    esp_err_t websocket_client_authenticate(int fd);
+
+    // Client iteration callback function type
+    typedef esp_err_t (*websocket_client_callback_t)(websocket_client_t* client, void* arg);
+
+    // Iterate through all clients and apply callback
+    // Returns ESP_OK if all callbacks succeeded, or first error encountered
+    esp_err_t websocket_client_for_each(websocket_client_callback_t callback, void* arg);
 
 #ifdef __cplusplus
 }

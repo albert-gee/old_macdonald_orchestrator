@@ -20,14 +20,14 @@ extern "C" {
  * @param network_name The name of the OpenThread network.
  * @param extended_pan_id The Extended PAN ID in hex string format.
  * @param mesh_local_prefix The Mesh-Local Prefix of the OpenThread network.
- * @param master_key The network master key in hex string format.
+ * @param network_key The network master key in hex string format.
  * @param pskc The Pre-Shared Commissioner Key (PSKc) in hex string format.
  *
  * @return ESP_OK on success, an `esp_err_t` error code otherwise.
  */
 esp_err_t thread_dataset_init(uint16_t channel, uint16_t pan_id, const char *network_name,
                               const char *extended_pan_id, const char *mesh_local_prefix,
-                              const char *master_key, const char *pskc);
+                              const char *network_key, const char *pskc);
 
 /**
  * @brief Enables the OpenThread IPv6 interface.
@@ -68,7 +68,7 @@ esp_err_t thread_start(void);
  */
 esp_err_t thread_stop(void);
 
-esp_err_t thread_get_device_role_name(const char *device_role_name);
+esp_err_t thread_get_device_role_name(char *device_role_name);
 
 esp_err_t thread_get_active_dataset(otOperationalDataset *dataset);
 
