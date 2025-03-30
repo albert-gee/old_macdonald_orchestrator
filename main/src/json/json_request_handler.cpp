@@ -1,5 +1,5 @@
-#include "json_request_handler.h"
-#include "json_response.h"
+#include "json/json_request_handler.h"
+#include "json/json_response.h"
 
 #include <cJSON.h>
 #include <esp_log.h>
@@ -131,7 +131,7 @@ static esp_err_t handle_unauthenticated_request(const cJSON *root, char **respon
 /**
  * @brief Handles WebSocket JSON requests.
  */
-esp_err_t handle_request(char *request_message, char **response_message, bool isAuthenticated) {
+esp_err_t handle_json_request(char *request_message, char **response_message, bool isAuthenticated) {
     if (!request_message || !response_message) {
         ESP_LOGE(TAG, "Invalid arguments, request_message or response_message is NULL");
         return ESP_ERR_INVALID_ARG;

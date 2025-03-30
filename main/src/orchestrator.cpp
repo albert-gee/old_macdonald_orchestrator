@@ -1,5 +1,6 @@
-#include "event_handler.h"
-#include "esp_ot_config.h"
+#include "events/chip_event_handler.h"
+#include "events/thread_event_handler.h"
+#include "events/wifi_event_handler.h"
 
 #include <esp_err.h>
 #include <esp_log.h>
@@ -9,10 +10,10 @@
 #include <esp_matter_controller_client.h>
 #include <esp_matter_console.h>
 #include <esp_matter_controller_console.h>
+#include <esp_ot_config.h>
 
 #include <platform/ESP32/OpenthreadLauncher.h>
 
-#include <esp_wifi.h>
 #include <portmacro.h>
 
 static const char *TAG = "ORCHESTRATOR";
@@ -29,6 +30,7 @@ extern "C" void app_main() {
         err = nvs_flash_init();
     }
     ESP_ERROR_CHECK(err);
+
 
     // Configure OpenThread Border Router
 #ifdef CONFIG_OPENTHREAD_BORDER_ROUTER
@@ -51,6 +53,37 @@ extern "C" void app_main() {
     set_openthread_platform_config(&config);
 #endif // CONFIG_OPENTHREAD_BORDER_ROUTER
 
+
+    // ESP_ERROR_CHECK(esp_netif_init());
+    // ESP_ERROR_CHECK(esp_event_loop_create_default());
+    // wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    // ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+    //
+    // // Register the event handler
+    // esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, handle_wifi_event, nullptr);
+    // esp_event_handler_register(OPENTHREAD_EVENT, ESP_EVENT_ANY_ID, handle_thread_event, nullptr);
+    //
+    //
+    // ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    //
+    // esp_netif_create_default_wifi_sta();
+    //
+    // wifi_config_t wifi_sta_config = {
+    //     .sta = {
+    //         .ssid = "SkyNet_Guest",
+    //         .password = "password147",
+    //         .threshold = {
+    //             .authmode = WIFI_AUTH_WPA2_PSK,
+    //         },
+    //     }
+    // };
+    // ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_sta_config));
+    //
+    // ESP_ERROR_CHECK(esp_wifi_start());
+    //
+    // ESP_LOGI(TAG, "wifi_init finished.");
+
+
     // Start the Matter stack
     err = esp_matter::start(handle_chip_device_event);
     if (err != ESP_OK) {
@@ -59,7 +92,7 @@ extern "C" void app_main() {
     }
     ESP_LOGI(TAG, "Matter stack started successfully");
 
-
+    //
     // Register the event handler
     esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, handle_wifi_event, nullptr);
     esp_event_handler_register(OPENTHREAD_EVENT, ESP_EVENT_ANY_ID, handle_thread_event, nullptr);

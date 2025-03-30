@@ -1,5 +1,6 @@
 #ifndef JSON_RESPONSE_H
 #define JSON_RESPONSE_H
+
 #include <cstdint>
 #include <cstddef>
 
