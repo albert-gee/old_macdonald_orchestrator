@@ -9,6 +9,8 @@
 extern "C" {
 #endif
 
+esp_err_t thread_dataset_init_new();
+
 /**
  * @brief Initializes a new OpenThread dataset.
  *
@@ -71,6 +73,8 @@ esp_err_t thread_stop(void);
 esp_err_t thread_get_device_role_name(char *device_role_name);
 
 esp_err_t thread_get_active_dataset(otOperationalDataset *dataset);
+
+esp_err_t thread_br_init();
 
 #ifdef __cplusplus
 }

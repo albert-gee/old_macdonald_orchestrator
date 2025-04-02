@@ -6,7 +6,7 @@
 #include <cstring>
 #include <thread_util.h>
 
-static const char *TAG = "JSON_PARSER";
+static const char *TAG = "JSON_REQUEST_HANDLER";
 static const char *AUTH_TOKEN = "secret_token_123";
 
 static esp_err_t handle_command_init_thread_network(const cJSON *root, char **response_message) {
@@ -62,9 +62,36 @@ static esp_err_t handle_command_init_thread_network(const cJSON *root, char **re
     return ESP_OK;
 }
 
-/**
- * @brief Handles authenticated commands.
- */
+static esp_err_t handle_command_ifconfig_up(const cJSON *root, char **response_message) {
+    ESP_LOGI(TAG, "ifconfig_up command received");
+
+    esp_err_t err = ifconfig_up();
+    if (err != ESP_OK) {
+        *response_message = create_json_error_response("Failed to bring up Thread interface");
+        return err;
+    }
+    ESP_LOGI(TAG, "Thread interface brought up successfully");
+
+    *response_message = create_json_info_response("Thread interface brought up successfully");
+
+    return ESP_OK;
+}
+
+static esp_err_t handle_command_thread_start(const cJSON *root, char **response_message) {
+    ESP_LOGI(TAG, "thread_start command received");
+
+    esp_err_t err = thread_start();
+    if (err != ESP_OK) {
+        *response_message = create_json_error_response("Failed to start Thread stack");
+        return err;
+    }
+    ESP_LOGI(TAG, "Thread stack started successfully");
+
+    *response_message = create_json_info_response("Thread stack started successfully");
+
+    return ESP_OK;
+}
+
 static esp_err_t handle_command(const cJSON *root, char **response_message) {
     if (!root) {
         ESP_LOGE(TAG, "Invalid JSON root object");
@@ -79,18 +106,22 @@ static esp_err_t handle_command(const cJSON *root, char **response_message) {
         *response_message = create_json_error_response("Invalid command format");
         return ESP_FAIL;
     }
+    ESP_LOGI(TAG, "Command: %s", command->valuestring);
 
     // Handle "init_thread_network" command
     if (strcmp(command->valuestring, "init_thread_network") == 0) {
         handle_command_init_thread_network(root, response_message);
     // Unknown command
+    } else if (strcmp(command->valuestring, "ifconfig_up") == 0) {
+        handle_command_ifconfig_up(root, response_message);
+    } else if (strcmp(command->valuestring, "thread_start") == 0) {
+        handle_command_thread_start(root, response_message);
     } else {
         *response_message = create_json_error_response("Unknown command");
     }
 
     return ESP_OK;
 }
-
 
 static esp_err_t handle_unauthenticated_request(const cJSON *root, char **response_message) {
     ESP_LOGI(TAG, "Received unauthenticated request");
@@ -128,9 +159,6 @@ static esp_err_t handle_unauthenticated_request(const cJSON *root, char **respon
     return ESP_ERR_INVALID_STATE;
 }
 
-/**
- * @brief Handles WebSocket JSON requests.
- */
 esp_err_t handle_json_request(char *request_message, char **response_message, bool isAuthenticated) {
     if (!request_message || !response_message) {
         ESP_LOGE(TAG, "Invalid arguments, request_message or response_message is NULL");

@@ -1,14 +1,21 @@
 #include "events/wifi_event_handler.h"
-#include "wifi_interface.h"
 #include "json/json_request_handler.h"
+#include "events/event_handler_util.h"
+#include "wifi_interface.h"
+#include "websocket_server.h"
+#include "thread_util.h"
 
 #include <cstdint>
 #include <esp_err.h>
 #include <esp_log.h>
+#include <esp_openthread_border_router.h>
 #include <esp_wifi_types_generic.h>
-#include <websocket_server.h>
 
 static const char *TAG = "WIFI_EVENT_HANDLER";
+
+#if CONFIG_OPENTHREAD_BORDER_ROUTER
+static bool sThreadBRInitialized = false;
+#endif
 
 void handle_wifi_event(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
     // Wi-Fi events
@@ -16,50 +23,69 @@ void handle_wifi_event(void *arg, esp_event_base_t event_base, int32_t event_id,
 
     // Wi-Fi STA started.
     if (event_id == WIFI_EVENT_STA_START) {
+        ESP_LOGI(TAG, "Wi-Fi STA Started");
 
-        // Start Wi-Fi Access Point
-        esp_err_t err = start_wifi_ap("SkyNet_Guest", "password147");
+        // Start Wi-Fi STA and AP
+        esp_err_t err = start_wifi("Old_MacDonald AP", "123456789", "SkyNet_Guest", "password147");
         if (err != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to connect to Wi-Fi, err:%s", esp_err_to_name(err));
+            ESP_LOGE(TAG, "Failed to start Wi-Fi, err:%s", esp_err_to_name(err));
         } else {
-            ESP_LOGI(TAG, "Connecting to Wi-Fi...");
+            ESP_LOGI(TAG, "Wi-Fi started successfully");
         }
 
     } else if (event_id == WIFI_EVENT_STA_CONNECTED) {
-        // Wi-Fi STA connected. Start WebSocket server
+        // Wi-Fi STA connected.
+        ESP_LOGI(TAG, "Wi-Fi STA Connected.");
 
-        ESP_LOGI(TAG, "Wi-Fi STA Connected. Starting WebSocket server...");
+#if CONFIG_OPENTHREAD_BORDER_ROUTER
+        if (!sThreadBRInitialized) {
 
+            ESP_LOGI(TAG, "Starting OpenThread Border Router");
+            esp_err_t err = thread_br_init();
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "Failed to initialize OpenThread Border Router, err:%s", esp_err_to_name(err));
+                broadcast_info_message("Failed to initialize OpenThread Border Router");
+            } else {
+                ESP_LOGI(TAG, "OpenThread Border Router initialized successfully");
+                sThreadBRInitialized = true;
+                broadcast_info_message("OpenThread Border Router initialized successfully");
+            }
+        }
+#endif
 
     } else if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        // Wi-Fi STA disconnected. Stop WebSocket server
-
+        // Wi-Fi STA disconnected.
         ESP_LOGI(TAG, "Wi-Fi Disconnected");
     } else if (event_id == WIFI_EVENT_AP_START) {
-        // Wi-Fi AP started. Start WebSocket server
+        // Wi-Fi AP started.
+        ESP_LOGI(TAG, "Wi-Fi AP Started");
 
+        // Start WebSocket server
         esp_err_t err = websocket_server_start(handle_json_request);
         if (err != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to start WebSocket server, err:%d", err);
+            ESP_LOGE(TAG, "Failed to start WebSocket server, err:%s", esp_err_to_name(err));
         }
         ESP_LOGI(TAG, "WebSocket server started");
 
-        // Connect to Wi-Fi STA
-        err = connect_to_wifi("SkyNet_Guest", "password147");
+    } else if (event_id == WIFI_EVENT_AP_STOP) {
+        // Wi-Fi AP stopped.
+        ESP_LOGI(TAG, "Wi-Fi AP Stopped");
+
+        // Stop WebSocket server
+        esp_err_t err = websocket_server_stop();
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to stop WebSocket server, err:%s", esp_err_to_name(err));
+        }
+        ESP_LOGI(TAG, "WebSocket server stopped");
+    } else if (event_id == WIFI_EVENT_AP_STACONNECTED) {
+
+        esp_err_t err = connect_to_wifi("SkyNet_Guest", "password147");
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "Failed to connect to Wi-Fi, err:%s", esp_err_to_name(err));
         } else {
-            ESP_LOGI(TAG, "Connecting to Wi-Fi...");
+            ESP_LOGI(TAG, "Connected to Wi-Fi");
         }
 
-    } else if (event_id == WIFI_EVENT_AP_STOP) {
-        // Wi-Fi AP stopped. Stop WebSocket server
-
-        ESP_LOGI(TAG, "Wi-Fi AP Stopped");
-        esp_err_t err = websocket_server_stop();
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to stop WebSocket server, err:%d", err);
-        }
     } else {
         ESP_LOGI(TAG, "Unhandled Wi-Fi event: %d", event_id);
     }

@@ -1,6 +1,7 @@
 #include "events/chip_event_handler.h"
 #include "events/thread_event_handler.h"
 #include "events/wifi_event_handler.h"
+#include <esp_ot_config.h>
 
 #include <esp_err.h>
 #include <esp_log.h>
@@ -10,7 +11,6 @@
 #include <esp_matter_controller_client.h>
 #include <esp_matter_console.h>
 #include <esp_matter_controller_console.h>
-#include <esp_ot_config.h>
 
 #include <platform/ESP32/OpenthreadLauncher.h>
 
@@ -24,6 +24,7 @@ static const char *TAG = "ORCHESTRATOR";
 
 extern "C" void app_main() {
     // Initialize ESP NVS layer
+    ESP_LOGI(TAG, "Initializing NVS Flash");
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -31,10 +32,8 @@ extern "C" void app_main() {
     }
     ESP_ERROR_CHECK(err);
 
-
     // Configure OpenThread Border Router
 #ifdef CONFIG_OPENTHREAD_BORDER_ROUTER
-
 #ifdef CONFIG_AUTO_UPDATE_RCP
     ESP_LOGI(TAG, "Registering RCP firmware storage and initializing OpenThread RCP");
     esp_vfs_spiffs_conf_t rcp_fw_conf = {
@@ -46,78 +45,78 @@ extern "C" void app_main() {
     esp_rcp_update_config_t rcp_update_config = ESP_OPENTHREAD_RCP_UPDATE_CONFIG();
     openthread_init_br_rcp(&rcp_update_config);
 #endif
-
     ESP_LOGI(TAG, "Setting OpenThread Default Configuration");
-    /* Set OpenThread platform config */
     esp_openthread_platform_config_t config = ESP_OPENTHREAD_DEFAULT_CONFIG();
     set_openthread_platform_config(&config);
 #endif // CONFIG_OPENTHREAD_BORDER_ROUTER
 
+    // Create default event loop
+    ESP_LOGI(TAG, "Creating default event loop");
+    err = esp_event_loop_create_default();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to create default event loop");
+        return;
+    }
 
-    // ESP_ERROR_CHECK(esp_netif_init());
-    // ESP_ERROR_CHECK(esp_event_loop_create_default());
-    // wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    // ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-    //
-    // // Register the event handler
-    // esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, handle_wifi_event, nullptr);
-    // esp_event_handler_register(OPENTHREAD_EVENT, ESP_EVENT_ANY_ID, handle_thread_event, nullptr);
-    //
-    //
-    // ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    //
-    // esp_netif_create_default_wifi_sta();
-    //
-    // wifi_config_t wifi_sta_config = {
-    //     .sta = {
-    //         .ssid = "SkyNet_Guest",
-    //         .password = "password147",
-    //         .threshold = {
-    //             .authmode = WIFI_AUTH_WPA2_PSK,
-    //         },
-    //     }
-    // };
-    // ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_sta_config));
-    //
-    // ESP_ERROR_CHECK(esp_wifi_start());
-    //
-    // ESP_LOGI(TAG, "wifi_init finished.");
+    // Register OpenThread and Wi-Fi event handlers
+    ESP_LOGI(TAG, "Registering event handlers");
+    esp_event_handler_register(OPENTHREAD_EVENT, ESP_EVENT_ANY_ID, handle_thread_event, nullptr);
+    esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, handle_wifi_event, nullptr);
 
-
-    // Start the Matter stack
+    // Start Matter stack
+    // This function also initializes Wi-Fi stack and OpenThread stack
+    ESP_LOGI(TAG, "Starting Matter stack");
     err = esp_matter::start(handle_chip_device_event);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start Matter stack");
         return;
     }
-    ESP_LOGI(TAG, "Matter stack started successfully");
 
-    //
-    // Register the event handler
-    esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, handle_wifi_event, nullptr);
-    esp_event_handler_register(OPENTHREAD_EVENT, ESP_EVENT_ANY_ID, handle_thread_event, nullptr);
-
-
-    // Matter CLI commands
+    // Initialize Matter CLI
 #if CONFIG_ENABLE_CHIP_SHELL
-    esp_matter::console::diagnostics_register_commands();
-    esp_matter::console::wifi_register_commands();
-    esp_matter::console::factoryreset_register_commands();
-    esp_matter::console::init();
+    ESP_LOGI(TAG, "Registering Matter CLI commands");
+
+    // Diagnostics, Wi-Fi, and Factory Reset CLI commands
+    err = esp_matter::console::diagnostics_register_commands();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to register diagnostics commands");
+        return;
+    }
+    err = esp_matter::console::wifi_register_commands();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to register Wi-Fi commands");
+        return;
+    }
+    err = esp_matter::console::factoryreset_register_commands();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to register factory reset commands");
+        return;
+    }
+
+    // Initialize Matter console
+    ESP_LOGI(TAG, "Initializing Matter console");
+    err = esp_matter::console::init();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize Matter console");
+        return;
+    }
 
     // Matter Controller CLI commands
 #if CONFIG_ESP_MATTER_CONTROLLER_ENABLE
+    ESP_LOGI(TAG, "Registering Matter Controller CLI commands");
     esp_matter::console::controller_register_commands();
 #endif
 
     // OpenThread CLI commands
 #ifdef CONFIG_OPENTHREAD_BORDER_ROUTER
+    ESP_LOGI(TAG, "Registering OpenThread CLI commands");
     esp_matter::console::otcli_register_commands();
 #endif
 
 #endif
 
-
+    // Initialize Matter Controller Client and setup commissioner
+    ESP_LOGI(TAG, "Initializing Matter Controller Client");
     // Locking the Matter thread
     esp_matter::lock::chip_stack_lock(portMAX_DELAY);
 
@@ -132,6 +131,7 @@ extern "C" void app_main() {
 
     // Set up commissioner
 #ifdef CONFIG_ESP_MATTER_COMMISSIONER_ENABLE
+    ESP_LOGI(TAG, "Setting up commissioner");
     err = esp_matter::controller::matter_controller_client::get_instance().setup_commissioner();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to setup commissioner");

@@ -1,9 +1,9 @@
 #include "websocket_server.h"
-// #include "websocket_client.h"
+#include "websocket_client.h"
+
 #include <esp_log.h>
 #include <cstdlib>
 #include <cstring>
-#include <websocket_client.h>
 
 static const char *TAG = "WS_SERVER";
 static httpd_handle_t server = nullptr;
@@ -100,6 +100,7 @@ static esp_err_t ws_request_handler(httpd_req_t *request) {
 
             // Send the response message back to the client
             websocket_send_message_to_all_clients(response_message);
+
             free(response_message);
         }
         ESP_LOGI(TAG, "Response message sent");
@@ -130,7 +131,8 @@ esp_err_t websocket_server_start(const json_request_handler_t json_request_handl
 
     // Start the HTTP server
     ESP_LOGI(TAG, "Starting HTTP server");
-    constexpr httpd_config_t server_cfg = HTTPD_DEFAULT_CONFIG();
+    httpd_config_t server_cfg = HTTPD_DEFAULT_CONFIG();
+    server_cfg.stack_size = 24576;
     esp_err_t ret = httpd_start(&server, &server_cfg);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start WebSocket server: %s", esp_err_to_name(ret));
@@ -187,7 +189,7 @@ typedef struct {
 } broadcast_data_t;
 
 static esp_err_t send_message_to_client_callback(websocket_client_t* client, void* arg) {
-    broadcast_data_t* data = (broadcast_data_t*)arg;
+    broadcast_data_t* data = static_cast<broadcast_data_t *>(arg);
 
     httpd_ws_frame_t frame = {
         .final = true,
