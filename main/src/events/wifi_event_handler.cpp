@@ -1,6 +1,6 @@
 #include "events/wifi_event_handler.h"
 #include "json/json_request_handler.h"
-#include "events/event_handler_util.h"
+#include "utils/event_handler_util.h"
 #include "wifi_interface.h"
 #include "websocket_server.h"
 #include "thread_util.h"
@@ -26,7 +26,7 @@ void handle_wifi_event(void *arg, esp_event_base_t event_base, int32_t event_id,
         ESP_LOGI(TAG, "Wi-Fi STA Started");
 
         // Start Wi-Fi STA and AP
-        esp_err_t err = start_wifi("Old_MacDonald AP", "123456789", "SkyNet_Guest", "password147");
+        esp_err_t err = wifi_set_ap_sta();
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "Failed to start Wi-Fi, err:%s", esp_err_to_name(err));
         } else {
@@ -78,13 +78,23 @@ void handle_wifi_event(void *arg, esp_event_base_t event_base, int32_t event_id,
         }
         ESP_LOGI(TAG, "WebSocket server stopped");
     } else if (event_id == WIFI_EVENT_AP_STACONNECTED) {
-
-        esp_err_t err = connect_to_wifi("SkyNet_Guest", "password147");
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to connect to Wi-Fi, err:%s", esp_err_to_name(err));
-        } else {
-            ESP_LOGI(TAG, "Connected to Wi-Fi");
-        }
+        // A station connected to the AP.
+        ESP_LOGI(TAG, "A station connected to the AP");
+    } else if (event_id == WIFI_EVENT_AP_STADISCONNECTED) {
+        // A station disconnected from the AP.
+        ESP_LOGI(TAG, "A station disconnected from the AP");
+    } else if (event_id == WIFI_EVENT_STA_AUTHMODE_CHANGE) {
+        // Wi-Fi STA authentication mode changed.
+        ESP_LOGI(TAG, "Wi-Fi STA Authentication Mode Changed");
+    } else if (event_id == WIFI_EVENT_STA_WPS_ER_SUCCESS) {
+        // WPS succeeded.
+        ESP_LOGI(TAG, "WPS Succeeded");
+    } else if (event_id == WIFI_EVENT_STA_WPS_ER_FAILED) {
+        // WPS failed.
+        ESP_LOGI(TAG, "WPS Failed");
+    } else if (event_id == WIFI_EVENT_STA_WPS_ER_TIMEOUT) {
+        // WPS timed out.
+        ESP_LOGI(TAG, "WPS Timed Out");
 
     } else {
         ESP_LOGI(TAG, "Unhandled Wi-Fi event: %d", event_id);

@@ -11,11 +11,10 @@ extern "C" {
  * @brief Parses a WebSocket request message and generates a response.
  *
  * @param request_message The incoming JSON message as a string.
- * @param response_message Output parameter for the response JSON string.
  * @param isAuthenticated Indicates if the client is authenticated.
  * @return ESP_OK on success, or an error code on failure.
  */
-esp_err_t handle_json_request(char *request_message, char **response_message, bool isAuthenticated);
+esp_err_t handle_json_request(char *request_message, bool isAuthenticated);
 
 #ifdef __cplusplus
 }

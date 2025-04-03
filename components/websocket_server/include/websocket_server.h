@@ -9,7 +9,7 @@
 extern "C" {
 #endif
 
-    typedef esp_err_t (*json_request_handler_t)(char *request_message, char **response_message, bool isAuthenticated);
+    typedef esp_err_t (*json_request_handler_t)(char *request_message, bool isAuthenticated);
 
     // Start the WebSocket server
     esp_err_t websocket_server_start(json_request_handler_t json_request_handler);

@@ -73,9 +73,8 @@ static esp_err_t ws_request_handler(httpd_req_t *request) {
 
         // Call the message handler
         ESP_LOGI(TAG, "Calling JSON request handler");
-        char *response_message = nullptr;
         const bool isAuthenticated = websocket_client_is_authenticated(client_fd);
-        ret = json_request_handler_fun(reinterpret_cast<char *>(ws_frame.payload), &response_message, isAuthenticated);
+        ret = json_request_handler_fun(reinterpret_cast<char *>(ws_frame.payload), isAuthenticated);
         if (ret == ESP_OK) {
             ESP_LOGI(TAG, "JSON request handler succeeded");
 
@@ -85,7 +84,7 @@ static esp_err_t ws_request_handler(httpd_req_t *request) {
                 ret = websocket_client_authenticate(client_fd);
                 if (ret != ESP_OK) {
                     ESP_LOGE(TAG, "Failed to authenticate client: %s", esp_err_to_name(ret));
-                    free(response_message);
+                    // free(response_message);
                     return ret;
                 }
 
@@ -95,15 +94,15 @@ static esp_err_t ws_request_handler(httpd_req_t *request) {
         }
         ESP_LOGI(TAG, "JSON request handler completed");
 
-        if (response_message) {
-            ESP_LOGI(TAG, "Sending response message: %s", response_message);
-
-            // Send the response message back to the client
-            websocket_send_message_to_all_clients(response_message);
-
-            free(response_message);
-        }
-        ESP_LOGI(TAG, "Response message sent");
+        // if (response_message) {
+        //     ESP_LOGI(TAG, "Sending response message: %s", response_message);
+        //
+        //     // Send the response message back to the client
+        //     websocket_send_message_to_all_clients(response_message);
+        //
+        //     free(response_message);
+        // }
+        // ESP_LOGI(TAG, "Response message sent");
 
         // Free the buffer
         free(buffer);

@@ -39,6 +39,10 @@ char *create_json_info_response(const char *info_message) {
     return create_json_response("info", info_message);
 }
 
+char *create_json_thread_role_set_response(const char *role) {
+    return create_json_response("thread_role_set", role);
+}
+
 /**
  * @brief Converts binary data to a hex string.
  *

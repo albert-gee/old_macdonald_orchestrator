@@ -7,9 +7,9 @@ extern "C" {
 
 #include <esp_err.h>
 
-esp_err_t connect_to_wifi(const char *ssid, const char *password);
+esp_err_t wifi_connect_sta_to_ap(const char *ssid, const char *password);
 
-esp_err_t start_wifi(const char *ap_ssid, const char *ap_password, const char *sta_ssid, const char *sta_password);
+esp_err_t wifi_set_ap_sta();
 
 #ifdef __cplusplus
 }

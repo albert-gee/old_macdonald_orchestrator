@@ -1,5 +1,5 @@
 idf_component_register(
-        SRC_DIRS "src" "src/events" "src/json"
+        SRC_DIRS "src" "src/events" "src/json" "src/utils"
         INCLUDE_DIRS "include"
         LDFRAGMENTS "linker.lf" # https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-guides/linker-script-generation.html
 )
