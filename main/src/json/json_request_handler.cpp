@@ -3,6 +3,7 @@
 #include <cJSON.h>
 #include <esp_log.h>
 #include <cstring>
+#include <matter_util.h>
 #include <thread_util.h>
 #include <wifi_interface.h>
 #include <utils/event_handler_util.h>
@@ -22,14 +23,13 @@ static esp_err_t handle_command_wifi_sta_connect(const cJSON *root) {
     // Extract values
     const cJSON *ssid = cJSON_GetObjectItem(payload, "ssid");
     const cJSON *password = cJSON_GetObjectItem(payload, "password");
-    ESP_LOGI(TAG, "Extracted values from payload: ssid=%s, password=%s", ssid->valuestring, password->valuestring);
 
     // Validate required parameters
     if (!cJSON_IsString(ssid) || !cJSON_IsString(password)) {
         broadcast_error_message("Invalid or missing fields in payload");
         return ESP_FAIL;
     }
-    ESP_LOGI(TAG, "Validated required parameters");
+    ESP_LOGI(TAG, "Extracted values from payload: ssid=%s, password=%s", ssid->valuestring, password->valuestring);
 
     // Call wifi_connect_sta_to_ap
     esp_err_t err = wifi_connect_sta_to_ap(ssid->valuestring, password->valuestring);
@@ -61,10 +61,7 @@ static esp_err_t handle_command_init_thread_network(const cJSON *root) {
     const cJSON *mesh_local_prefix = cJSON_GetObjectItem(payload, "mesh_local_prefix");
     const cJSON *master_key = cJSON_GetObjectItem(payload, "master_key");
     const cJSON *pskc = cJSON_GetObjectItem(payload, "pskc");
-    ESP_LOGI(TAG, "Extracted values from payload: channel=%d, pan_id=%d, network_name=%s, extended_pan_id=%s, mesh_local_prefix=%s, master_key=%s, pskc=%s",
-             channel->valueint, pan_id->valueint, network_name->valuestring,
-             extended_pan_id->valuestring, mesh_local_prefix->valuestring,
-             master_key->valuestring, pskc->valuestring);
+    ESP_LOGI(TAG, "Extracted values from payload");
 
     // Validate required parameters
     if (!cJSON_IsNumber(channel) || !cJSON_IsNumber(pan_id) ||
@@ -127,13 +124,190 @@ static esp_err_t handle_command_thread_start(const cJSON *root) {
     return ESP_OK;
 }
 
+static esp_err_t handle_command_pair_ble_thread(const cJSON *root) {
+    ESP_LOGI(TAG, "pair_ble_thread command received");
+
+    cJSON *payload = cJSON_GetObjectItem(root, "payload");
+    if (!cJSON_IsObject(payload)) {
+        broadcast_error_message("Invalid payload format");
+        return ESP_FAIL;
+    }
+
+    // Extract values from JSON
+    const cJSON *node_id = cJSON_GetObjectItem(payload, "node_id");
+    const cJSON *setup_code = cJSON_GetObjectItem(payload, "setup_code");
+    const cJSON *discriminator = cJSON_GetObjectItem(payload, "discriminator");
+
+    // Validate required parameters
+    if (!cJSON_IsString(node_id) || !cJSON_IsString(setup_code) || !cJSON_IsString(discriminator)) {
+        broadcast_error_message("Invalid or missing fields in payload");
+        return ESP_FAIL;
+    }
+
+    ESP_LOGI(TAG, "Extracted values from payload: node_id=%s, setup_code=%s, discriminator=%s",
+             node_id->valuestring, setup_code->valuestring, discriminator->valuestring);
+
+    // Call pairing function with extracted values
+    esp_err_t err = pairing_ble_thread(node_id->valuestring, setup_code->valuestring, discriminator->valuestring);
+    if (err != ESP_OK) {
+        broadcast_error_message("Failed to pair with Thread device");
+        return err;
+    }
+
+    ESP_LOGI(TAG, "Thread-BLE pairing initiated successfully");
+    broadcast_info_message("Thread-BLE pairing initiated successfully");
+    return ESP_OK;
+}
+
+// Static function to handle invoking the cluster command
+static esp_err_t handle_command_invoke_cluster_command(const cJSON *root) {
+    ESP_LOGI(TAG, "invoke_cluster_command received");
+
+    cJSON *payload = cJSON_GetObjectItem(root, "payload");
+    if (!cJSON_IsObject(payload)) {
+        broadcast_error_message("Invalid payload format");
+        return ESP_FAIL;
+    }
+
+    // Extract values for the invoke cluster command
+    const cJSON *destination_id = cJSON_GetObjectItem(payload, "destination_id");
+    const cJSON *endpoint_id = cJSON_GetObjectItem(payload, "endpoint_id");
+    const cJSON *cluster_id = cJSON_GetObjectItem(payload, "cluster_id");
+    const cJSON *command_id = cJSON_GetObjectItem(payload, "command_id");
+    const cJSON *command_data_field = cJSON_GetObjectItem(payload, "command_data_field");
+
+    // Validate required parameters
+    if (!cJSON_IsString(destination_id) || !cJSON_IsNumber(endpoint_id) ||
+        !cJSON_IsNumber(cluster_id) || !cJSON_IsNumber(command_id) || !cJSON_IsString(command_data_field)) {
+        broadcast_error_message("Invalid or missing fields in payload");
+        return ESP_FAIL;
+    }
+    ESP_LOGI(TAG, "Extracted values from payload: destination_id=%s, endpoint_id=%d, cluster_id=%d, command_id=%d, command_data_field=%s",
+             destination_id->valuestring, endpoint_id->valueint, cluster_id->valueint,
+             command_id->valueint, command_data_field->valuestring);
+
+    uint64_t node_id1 = strtoull(destination_id->valuestring, nullptr, 0);
+    auto endpoint_id1 = static_cast<uint16_t>(endpoint_id->valueint);
+    auto cluster_id1 = static_cast<uint32_t>(cluster_id->valueint);
+    auto command_id1 = static_cast<uint32_t>(command_id->valueint);
+    const char *command_data_field1 = command_data_field->valuestring;
+
+    esp_err_t err = invoke_cluster_command(
+        node_id1,
+        endpoint_id1,
+        cluster_id1, command_id1,
+        command_data_field1
+    );
+    if (err != ESP_OK) {
+        broadcast_error_message("Failed to invoke cluster command");
+        return err;
+    }
+
+    ESP_LOGI(TAG, "Cluster command invoked successfully");
+    broadcast_info_message("Cluster command invoked successfully");
+
+    return ESP_OK;
+}
+
+static esp_err_t handle_command_read_attr_command(const cJSON *root) {
+    ESP_LOGI(TAG, "read_attr_command received");
+
+    cJSON *payload = cJSON_GetObjectItem(root, "payload");
+    if (!cJSON_IsObject(payload)) {
+        broadcast_error_message("Invalid payload format");
+        return ESP_FAIL;
+    }
+
+    // Extract values for the invoke cluster command
+    const cJSON *node_id = cJSON_GetObjectItem(payload, "node_id");
+    const cJSON *endpoint_id = cJSON_GetObjectItem(payload, "endpoint_id");
+    const cJSON *cluster_id = cJSON_GetObjectItem(payload, "cluster_id");
+    const cJSON *attribute_id = cJSON_GetObjectItem(payload, "attribute_id");
+
+    // Validate required parameters
+    if (!cJSON_IsString(node_id) || !cJSON_IsNumber(endpoint_id) ||
+        !cJSON_IsNumber(cluster_id) || !cJSON_IsNumber(attribute_id)) {
+        broadcast_error_message("Invalid or missing fields in payload");
+        return ESP_FAIL;
+    }
+
+    ESP_LOGI(TAG, "Extracted values from payload: node_id=%s, endpoint_id=%d, cluster_id=%d, attribute_id=%d",
+             node_id->valuestring, endpoint_id->valueint, cluster_id->valueint,
+             attribute_id->valueint);
+
+    // Call the invoke cluster command
+    esp_err_t err = send_read_attr_command(
+        strtoull(node_id->valuestring, nullptr, 0),  // Convert destination_id to uint64_t
+        static_cast<uint16_t>(endpoint_id->valueint),
+        static_cast<uint32_t>(cluster_id->valueint),
+        static_cast<uint32_t>(attribute_id->valueint)
+    );
+    if (err != ESP_OK) {
+        broadcast_error_message("Failed to invoke read_attr_command");
+        return err;
+    }
+
+    ESP_LOGI(TAG, "read_attr_command invoked successfully");
+    broadcast_info_message("read_attr_command invoked successfully");
+
+    return ESP_OK;
+}
+
+static esp_err_t handle_command_subscribe_attr_command(const cJSON *root) {
+    ESP_LOGI(TAG, "subscribe_attr_command received");
+
+    cJSON *payload = cJSON_GetObjectItem(root, "payload");
+    if (!cJSON_IsObject(payload)) {
+        broadcast_error_message("Invalid payload format");
+        return ESP_FAIL;
+    }
+
+    // Extract values for the invoke cluster command
+    const cJSON *node_id = cJSON_GetObjectItem(payload, "node_id");
+    const cJSON *endpoint_id = cJSON_GetObjectItem(payload, "endpoint_id");
+    const cJSON *cluster_id = cJSON_GetObjectItem(payload, "cluster_id");
+    const cJSON *attribute_id = cJSON_GetObjectItem(payload, "attribute_id");
+    const cJSON *min_interval = cJSON_GetObjectItem(payload, "min_interval");
+    const cJSON *max_interval = cJSON_GetObjectItem(payload, "max_interval");
+
+    // Validate required parameters
+    if (!cJSON_IsString(node_id) || !cJSON_IsNumber(endpoint_id) ||
+        !cJSON_IsNumber(cluster_id) || !cJSON_IsNumber(attribute_id) ||
+        !cJSON_IsNumber(min_interval) || !cJSON_IsNumber(max_interval)) {
+        broadcast_error_message("Invalid or missing fields in payload");
+        return ESP_FAIL;
+    }
+    ESP_LOGI(TAG, "Extracted values from payload: node_id=%s, endpoint_id=%d, cluster_id=%d, attribute_id=%d, min_interval=%d, max_interval=%d",
+             node_id->valuestring, endpoint_id->valueint, cluster_id->valueint,
+             attribute_id->valueint, min_interval->valueint, max_interval->valueint);
+
+    // Call the invoke cluster command
+    esp_err_t err = send_subscribe_attr_command(
+        strtoull(node_id->valuestring, nullptr, 0),  // Convert destination_id to uint64_t
+        static_cast<uint16_t>(endpoint_id->valueint),
+        static_cast<uint32_t>(cluster_id->valueint),
+        static_cast<uint32_t>(attribute_id->valueint),
+        static_cast<uint16_t>(min_interval->valueint),
+        static_cast<uint16_t>(max_interval->valueint),
+        true
+    );
+    if (err != ESP_OK) {
+        broadcast_error_message("Failed to invoke subscribe_attr_command");
+        return err;
+    }
+
+    ESP_LOGI(TAG, "subscribe_attr_command invoked successfully");
+    broadcast_info_message("subscribe_attr_command invoked successfully");
+
+    return ESP_OK;
+}
+
 static esp_err_t handle_authenticated_request(const cJSON *root) {
     if (!root) {
         ESP_LOGE(TAG, "Invalid JSON root object");
         return ESP_ERR_INVALID_ARG;
     }
     ESP_LOGI(TAG, "Received a command");
-
 
     // Check for "command" field
     cJSON *command = cJSON_GetObjectItem(root, "command");
@@ -152,8 +326,17 @@ static esp_err_t handle_authenticated_request(const cJSON *root) {
         handle_command_ifconfig_up(root);
     } else if (strcmp(command->valuestring, "thread_start") == 0) {
         handle_command_thread_start(root);
+    }  else if (strcmp(command->valuestring, "pair_ble_thread") == 0) {
+        handle_command_pair_ble_thread(root);
+    } else if (strcmp(command->valuestring, "invoke_cluster_command") == 0) {
+        handle_command_invoke_cluster_command(root);
+    }  else if (strcmp(command->valuestring, "send_read_attr_command") == 0) {
+        handle_command_read_attr_command(root);
+    }  else if (strcmp(command->valuestring, "invoke_cluster_command") == 0) {
+        handle_command_subscribe_attr_command(root);
     } else {
         broadcast_error_message("Unknown command");
+        return ESP_ERR_INVALID_ARG;
     }
 
     return ESP_OK;
@@ -195,11 +378,6 @@ static esp_err_t handle_unauthenticated_request(const cJSON *root) {
 }
 
 esp_err_t handle_json_request(char *request_message, bool isAuthenticated) {
-    // if (!request_message || !response_message) {
-    //     ESP_LOGE(TAG, "Invalid arguments, request_message or response_message is NULL");
-    //     return ESP_ERR_INVALID_ARG;
-    // }
-    // ESP_LOGI(TAG, "Received request: %s", request_message);
 
     cJSON *root = cJSON_Parse(request_message);
     if (!root) {
@@ -208,10 +386,13 @@ esp_err_t handle_json_request(char *request_message, bool isAuthenticated) {
     }
     ESP_LOGI(TAG, "Parsed JSON successfully");
 
-    const esp_err_t ret = (isAuthenticated)
-                              ? handle_authenticated_request(root)
-                              : handle_unauthenticated_request(root);
+    esp_err_t ret = ESP_FAIL;
+    if (isAuthenticated) {
+        ret = handle_authenticated_request(root);
+    } else {
+        ret = handle_unauthenticated_request(root);
+    }
 
-    cJSON_Delete(root); // Free the parsed JSON object
+    cJSON_Delete(root);
     return ret;
 }

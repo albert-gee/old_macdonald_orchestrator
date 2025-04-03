@@ -384,6 +384,40 @@ esp_err_t thread_get_active_dataset(otOperationalDataset *dataset) {
     return ESP_OK;
 }
 
+esp_err_t thread_get_active_dataset_tlvs(uint8_t *mTlvs, uint8_t *mLength) {
+    if (!mTlvs || !mLength) {
+        ESP_LOGE(TAG, "Invalid buffer pointer");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    otInstance *openThreadInstance = esp_openthread_get_instance();
+    ESP_RETURN_ON_ERROR(openThreadInstance ? ESP_OK : ESP_FAIL, TAG, "OpenThread instance is not initialized");
+
+    esp_openthread_lock_acquire(portMAX_DELAY);
+
+    otOperationalDatasetTlvs dataset_tlvs = {0}; // Initialize the structure
+
+    if (otDatasetGetActiveTlvs(openThreadInstance, &dataset_tlvs) != OT_ERROR_NONE) {
+        ESP_LOGE(TAG, "Failed to get active dataset TLVs");
+        esp_openthread_lock_release();
+        return ESP_FAIL;
+    }
+
+    if (dataset_tlvs.mLength > *mLength) {
+        ESP_LOGE(TAG, "Buffer too small for dataset TLVs");
+        esp_openthread_lock_release();
+        return ESP_ERR_NO_MEM;
+    }
+
+    memcpy(mTlvs, dataset_tlvs.mTlvs, dataset_tlvs.mLength);
+    *mLength = dataset_tlvs.mLength;
+
+    esp_openthread_lock_release();
+
+    return ESP_OK;
+}
+
+
 esp_err_t thread_br_init() {
     esp_openthread_set_backbone_netif(esp_netif_get_handle_from_ifkey("WIFI_STA_DEF"));
 
