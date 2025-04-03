@@ -10,13 +10,6 @@ extern "C" {
 
 void binary_to_hex_string(const uint8_t *bin, size_t bin_len, char *hex_str, size_t hex_size);
 
-/**
- * @brief Creates a JSON response object.
- *
- * @param command The command type (e.g., "success", "error").
- * @param payload The message payload.
- * @return A JSON-formatted string.
- */
 char *create_json_response(const char *command, const char *payload);
 
 
@@ -31,6 +24,12 @@ char *create_json_set_dataset_response(uint64_t active_timestamp, uint64_t pendi
                                        uint16_t wakeup_channel, const uint8_t *pskc);
 
 char *create_json_thread_role_set_response(const char *role);
+
+char *create_json_ifconfig_status_response(const char *status);
+
+char *create_json_thread_status_response(const char *status);
+
+char *create_json_wifi_sta_status_response(const char *status);
 
 #ifdef __cplusplus
 }

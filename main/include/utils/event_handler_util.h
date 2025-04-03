@@ -18,6 +18,12 @@ void broadcast_thread_dataset_active_message(uint64_t active_timestamp, uint64_t
 
 void broadcast_thread_role_set_message(const char *role);
 
+void broadcast_ifconfig_status(const char *status);
+
+void broadcast_thread_status(const char *status);
+
+void broadcast_wifi_sta_status(const char *status);
+
 #ifdef __cplusplus
 }
 #endif

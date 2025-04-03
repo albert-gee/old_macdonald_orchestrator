@@ -127,7 +127,7 @@ static esp_err_t handle_command_thread_start(const cJSON *root) {
     return ESP_OK;
 }
 
-static esp_err_t handle_command(const cJSON *root) {
+static esp_err_t handle_authenticated_request(const cJSON *root) {
     if (!root) {
         ESP_LOGE(TAG, "Invalid JSON root object");
         return ESP_ERR_INVALID_ARG;
@@ -209,7 +209,7 @@ esp_err_t handle_json_request(char *request_message, bool isAuthenticated) {
     ESP_LOGI(TAG, "Parsed JSON successfully");
 
     const esp_err_t ret = (isAuthenticated)
-                              ? handle_command(root)
+                              ? handle_authenticated_request(root)
                               : handle_unauthenticated_request(root);
 
     cJSON_Delete(root); // Free the parsed JSON object

@@ -19,13 +19,9 @@ void handle_thread_event(void *arg, esp_event_base_t event_base, int32_t event_i
     otOperationalDataset dataset;
 
     switch (event_id) {
+        // Dataset Changed
         case OPENTHREAD_EVENT_DATASET_CHANGED:
             ESP_LOGI(TAG, "OpenThread dataset changed");
-
-        // // Acquire OpenThread lock
-        // esp_openthread_lock_acquire(portMAX_DELAY);
-
-        // Get the active dataset, convert it to json, and broadcast it
             err = thread_get_active_dataset(&dataset);
             if (err == ESP_OK) {
                 // 2 characters per byte + null terminator
@@ -52,17 +48,10 @@ void handle_thread_event(void *arg, esp_event_base_t event_base, int32_t event_i
             } else {
                 ESP_LOGE(TAG, "Failed to get device role name");
             }
-
-        // // Release OpenThread lock
-        // esp_openthread_lock_release();
-
             break;
 
         // Role Changed
         case OPENTHREAD_EVENT_ROLE_CHANGED:
-            // // Acquire OpenThread lock
-            // esp_openthread_lock_acquire(portMAX_DELAY);
-
             char device_role_name[32];
             err = thread_get_device_role_name(device_role_name);
             if (err == ESP_OK) {
@@ -71,16 +60,26 @@ void handle_thread_event(void *arg, esp_event_base_t event_base, int32_t event_i
             } else {
                 ESP_LOGE(TAG, "Failed to get device role name");
             }
-        // // Release OpenThread lock
-        // esp_openthread_lock_release();
             break;
 
         case OPENTHREAD_EVENT_IF_UP:
             ESP_LOGI(TAG, "OpenThread interface up");
+            broadcast_ifconfig_status("enabled");
             break;
-        case OPENTHREAD_EVENT_START:
+        case OPENTHREAD_EVENT_IF_DOWN:
+            ESP_LOGI(TAG, "OpenThread interface down");
+            broadcast_ifconfig_status("disabled");
+            break;
+        case OPENTHREAD_EVENT_ATTACHED:
             ESP_LOGI(TAG, "OpenThread stack started");
+            broadcast_thread_status("attached");
             break;
+        case OPENTHREAD_EVENT_DETACHED:
+            ESP_LOGI(TAG, "OpenThread stack stopped");
+            broadcast_thread_status("detached");
+            break;
+
+
         default:
             ESP_LOGI(TAG, "Unknown OpenThread event: %d", event_id);
             break;

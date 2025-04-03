@@ -53,3 +53,24 @@ void broadcast_thread_role_set_message(const char *role) {
         ESP_LOGE(TAG, "Failed to broadcast thread_role_set: %s", role);
     }
 }
+
+void broadcast_ifconfig_status(const char *status) {
+    char *response = create_json_ifconfig_status_response(status);
+    if (websocket_send_message_to_all_clients(response) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to broadcast ifconfig status: %s", status);
+    }
+}
+
+void broadcast_thread_status(const char *status) {
+    char *response = create_json_thread_status_response(status);
+    if (websocket_send_message_to_all_clients(response) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to broadcast thread status: %s", status);
+    }
+}
+
+void broadcast_wifi_sta_status(const char *status) {
+    char *response = create_json_wifi_sta_status_response(status);
+    if (websocket_send_message_to_all_clients(response) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to broadcast WiFI STA status: %s", status);
+    }
+}

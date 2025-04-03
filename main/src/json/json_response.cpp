@@ -43,6 +43,18 @@ char *create_json_thread_role_set_response(const char *role) {
     return create_json_response("thread_role_set", role);
 }
 
+char *create_json_ifconfig_status_response(const char *status) {
+    return create_json_response("ifconfig_status", status);
+}
+
+char *create_json_thread_status_response(const char *status) {
+    return create_json_response("thread_status", status);
+}
+
+char *create_json_wifi_sta_status_response(const char *status) {
+    return create_json_response("wifi_sta_status", status);
+}
+
 /**
  * @brief Converts binary data to a hex string.
  *

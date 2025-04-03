@@ -36,6 +36,7 @@ void handle_wifi_event(void *arg, esp_event_base_t event_base, int32_t event_id,
     } else if (event_id == WIFI_EVENT_STA_CONNECTED) {
         // Wi-Fi STA connected.
         ESP_LOGI(TAG, "Wi-Fi STA Connected.");
+        broadcast_wifi_sta_status("connected");
 
 #if CONFIG_OPENTHREAD_BORDER_ROUTER
         if (!sThreadBRInitialized) {
@@ -56,6 +57,8 @@ void handle_wifi_event(void *arg, esp_event_base_t event_base, int32_t event_id,
     } else if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
         // Wi-Fi STA disconnected.
         ESP_LOGI(TAG, "Wi-Fi Disconnected");
+        broadcast_wifi_sta_status("disconnect");
+
     } else if (event_id == WIFI_EVENT_AP_START) {
         // Wi-Fi AP started.
         ESP_LOGI(TAG, "Wi-Fi AP Started");
@@ -83,19 +86,6 @@ void handle_wifi_event(void *arg, esp_event_base_t event_base, int32_t event_id,
     } else if (event_id == WIFI_EVENT_AP_STADISCONNECTED) {
         // A station disconnected from the AP.
         ESP_LOGI(TAG, "A station disconnected from the AP");
-    } else if (event_id == WIFI_EVENT_STA_AUTHMODE_CHANGE) {
-        // Wi-Fi STA authentication mode changed.
-        ESP_LOGI(TAG, "Wi-Fi STA Authentication Mode Changed");
-    } else if (event_id == WIFI_EVENT_STA_WPS_ER_SUCCESS) {
-        // WPS succeeded.
-        ESP_LOGI(TAG, "WPS Succeeded");
-    } else if (event_id == WIFI_EVENT_STA_WPS_ER_FAILED) {
-        // WPS failed.
-        ESP_LOGI(TAG, "WPS Failed");
-    } else if (event_id == WIFI_EVENT_STA_WPS_ER_TIMEOUT) {
-        // WPS timed out.
-        ESP_LOGI(TAG, "WPS Timed Out");
-
     } else {
         ESP_LOGI(TAG, "Unhandled Wi-Fi event: %d", event_id);
     }
