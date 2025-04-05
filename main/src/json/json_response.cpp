@@ -55,6 +55,10 @@ char *create_json_wifi_sta_status_response(const char *status) {
     return create_json_response("wifi_sta_status", status);
 }
 
+char *create_json_temperature_response(const char *value) {
+    return create_json_response("temperature_set", value);
+}
+
 /**
  * @brief Converts binary data to a hex string.
  *

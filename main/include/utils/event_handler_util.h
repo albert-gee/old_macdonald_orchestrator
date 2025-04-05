@@ -24,6 +24,8 @@ void broadcast_thread_status(const char *status);
 
 void broadcast_wifi_sta_status(const char *status);
 
+void broadcast_temperature(const char *value);
+
 #ifdef __cplusplus
 }
 #endif

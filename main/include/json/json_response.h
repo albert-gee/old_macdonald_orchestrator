@@ -31,6 +31,8 @@ char *create_json_thread_status_response(const char *status);
 
 char *create_json_wifi_sta_status_response(const char *status);
 
+char *create_json_temperature_response(const char *value);
+
 #ifdef __cplusplus
 }
 #endif

@@ -250,7 +250,21 @@ void subscription_attribute_report_callback(uint64_t remote_node_id,
     if (data) {
         process_tlv_data(data);
     }
+
+    // If cluster ID is 0x402 and attribute ID is 0x0, broadcast temperature
+    if (path.mClusterId == 0x0402 && path.mAttributeId == 0x0000) {
+        int64_t signed_value = 0;
+        CHIP_ERROR err = data->Get(signed_value);
+        if (err == CHIP_NO_ERROR) {
+            ESP_LOGI(TAG, "Received signed integer: %" PRId64, signed_value);
+            snprintf(message, sizeof(message), "%" PRId64, signed_value);
+            broadcast_temperature(message);
+        } else {
+            ESP_LOGE(TAG, "Failed to decode TLV signed integer: %" CHIP_ERROR_FORMAT, err.Format());
+        }
+    }
 }
+
 
 void subscribe_done_callback(uint64_t remote_node_id, uint32_t subscription_id) {
     char message[128];

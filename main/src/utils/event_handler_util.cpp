@@ -74,3 +74,10 @@ void broadcast_wifi_sta_status(const char *status) {
         ESP_LOGE(TAG, "Failed to broadcast WiFI STA status: %s", status);
     }
 }
+void broadcast_temperature(const char *value) {
+    char *response = create_json_temperature_response(value);
+    if (websocket_send_message_to_all_clients(response) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to broadcast temperature: %s", value);
+    }
+    free(response);
+}
