@@ -6,6 +6,9 @@
 #include <matter_util.h>
 #include <thread_util.h>
 #include <wifi_interface.h>
+#include <app/ConcreteAttributePath.h>
+#include <core/TLVReader.h>
+#include <events/chip_event_handler.h>
 #include <utils/event_handler_util.h>
 
 static const char *TAG = "JSON_REQUEST_HANDLER";
@@ -283,18 +286,21 @@ static esp_err_t handle_command_subscribe_attr_command(const cJSON *root) {
 
     // Call the invoke cluster command
     esp_err_t err = send_subscribe_attr_command(
-        strtoull(node_id->valuestring, nullptr, 0),  // Convert destination_id to uint64_t
+        strtoull(node_id->valuestring, nullptr, 0),  // Convert node_id to uint64_t
         static_cast<uint16_t>(endpoint_id->valueint),
         static_cast<uint32_t>(cluster_id->valueint),
         static_cast<uint32_t>(attribute_id->valueint),
         static_cast<uint16_t>(min_interval->valueint),
         static_cast<uint16_t>(max_interval->valueint),
-        true
+        true,
+        subscription_attribute_report_callback,
+        subscribe_done_callback
     );
     if (err != ESP_OK) {
         broadcast_error_message("Failed to invoke subscribe_attr_command");
         return err;
     }
+
 
     ESP_LOGI(TAG, "subscribe_attr_command invoked successfully");
     broadcast_info_message("subscribe_attr_command invoked successfully");
@@ -332,7 +338,7 @@ static esp_err_t handle_authenticated_request(const cJSON *root) {
         handle_command_invoke_cluster_command(root);
     }  else if (strcmp(command->valuestring, "send_read_attr_command") == 0) {
         handle_command_read_attr_command(root);
-    }  else if (strcmp(command->valuestring, "invoke_cluster_command") == 0) {
+    }  else if (strcmp(command->valuestring, "send_subscribe_attr_command") == 0) {
         handle_command_subscribe_attr_command(root);
     } else {
         broadcast_error_message("Unknown command");
