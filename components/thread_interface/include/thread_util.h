@@ -9,8 +9,6 @@
 extern "C" {
 #endif
 
-esp_err_t thread_dataset_init_new();
-
 /**
  * @brief Initializes a new OpenThread dataset.
  *

@@ -35,7 +35,7 @@ static esp_err_t handle_command_wifi_sta_connect(const cJSON *root) {
     ESP_LOGI(TAG, "Extracted values from payload: ssid=%s, password=%s", ssid->valuestring, password->valuestring);
 
     // Call wifi_connect_sta_to_ap
-    esp_err_t err = wifi_connect_sta_to_ap(ssid->valuestring, password->valuestring);
+    esp_err_t err = wifi_sta_connect(ssid->valuestring, password->valuestring);
     if (err != ESP_OK) {
         broadcast_error_message("Failed to connect to Wi-Fi AP");
         return err;
@@ -150,8 +150,43 @@ static esp_err_t handle_command_pair_ble_thread(const cJSON *root) {
     ESP_LOGI(TAG, "Extracted values from payload: node_id=%s, setup_code=%s, discriminator=%s",
              node_id->valuestring, setup_code->valuestring, discriminator->valuestring);
 
+    // Parse and validate node_id, setup_code, and discriminator
+    errno = 0;
+    const uint64_t node_id_val = strtoull(node_id->valuestring, nullptr, 0);
+    if (errno != 0 || node_id_val == 0) {
+        ESP_LOGE(TAG, "Invalid node_id format");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    errno = 0;
+    uint32_t pin_val = strtoul(setup_code->valuestring, nullptr, 10);
+    if (errno != 0 || pin_val == 0) {
+        ESP_LOGE(TAG, "Invalid pin format");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    errno = 0;
+    uint16_t discriminator_val = strtoul(discriminator->valuestring, nullptr, 10);
+    if (errno != 0 || discriminator_val == 0) {
+        ESP_LOGE(TAG, "Invalid discriminator format");
+        return ESP_ERR_INVALID_ARG;
+    }
+    ESP_LOGI(TAG, "Parsed values: node_id=0x%" PRIX64 ", pin=%" PRIu32 ", discriminator=%" PRIu16,
+             node_id_val, pin_val, discriminator_val);
+
+    // Get Thread dataset in TLV format
+    uint8_t dataset_tlvs[OT_OPERATIONAL_DATASET_MAX_LENGTH];
+    uint8_t dataset_len = sizeof(dataset_tlvs);
+
+    esp_err_t err = thread_get_active_dataset_tlvs(dataset_tlvs, &dataset_len);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to get Thread dataset TLVs");
+        return err;
+    }
+    ESP_LOGI(TAG, "Thread dataset length: %zu", dataset_len);
+
     // Call pairing function with extracted values
-    esp_err_t err = pairing_ble_thread(node_id->valuestring, setup_code->valuestring, discriminator->valuestring);
+    err = pairing_ble_thread(node_id_val, pin_val, discriminator_val, dataset_tlvs, dataset_len);
     if (err != ESP_OK) {
         broadcast_error_message("Failed to pair with Thread device");
         return err;
@@ -243,7 +278,8 @@ static esp_err_t handle_command_read_attr_command(const cJSON *root) {
         strtoull(node_id->valuestring, nullptr, 0),  // Convert destination_id to uint64_t
         static_cast<uint16_t>(endpoint_id->valueint),
         static_cast<uint32_t>(cluster_id->valueint),
-        static_cast<uint32_t>(attribute_id->valueint)
+        static_cast<uint32_t>(attribute_id->valueint),
+        read_attribute_data_callback
     );
     if (err != ESP_OK) {
         broadcast_error_message("Failed to invoke read_attr_command");

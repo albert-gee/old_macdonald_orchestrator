@@ -19,6 +19,11 @@ void handle_thread_event(void *arg, esp_event_base_t event_base, int32_t event_i
     otOperationalDataset dataset;
 
     switch (event_id) {
+        // OpenThread started
+        case OPENTHREAD_EVENT_START:
+            ESP_LOGI(TAG, "OpenThread started");
+            break;
+
         // Dataset Changed
         case OPENTHREAD_EVENT_DATASET_CHANGED:
             ESP_LOGI(TAG, "OpenThread dataset changed");
@@ -78,7 +83,6 @@ void handle_thread_event(void *arg, esp_event_base_t event_base, int32_t event_i
             ESP_LOGI(TAG, "OpenThread stack stopped");
             broadcast_thread_status("detached");
             break;
-
 
         default:
             ESP_LOGI(TAG, "Unknown OpenThread event: %d", event_id);

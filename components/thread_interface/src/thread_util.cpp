@@ -1,15 +1,15 @@
 #include "thread_util.h"
 
-#include <openthread/dataset.h>
-#include <openthread/dataset_ftd.h>
-#include <openthread/instance.h>
-#include <openthread/thread.h>
 #include <esp_log.h>
 #include <esp_check.h>
 #include <esp_openthread.h>
 #include <esp_openthread_border_router.h>
 #include <esp_openthread_lock.h>
 #include <portmacro.h>
+#include <openthread/dataset.h>
+#include <openthread/dataset_ftd.h>
+#include <openthread/instance.h>
+#include <openthread/thread.h>
 
 static const char *TAG = "THREAD_UTIL";
 
@@ -68,101 +68,6 @@ static size_t hex_string_to_bytes(const char *hex_string, uint8_t *output_buffer
     }
 
     return output_size;
-}
-
-
-esp_err_t thread_dataset_init_new() {
-    ESP_LOGI(TAG, "Initializing new OpenThread dataset...");
-
-    otInstance *instance = esp_openthread_get_instance();
-    if (!instance) {
-        ESP_LOGE(TAG, "OpenThread instance is NULL");
-        return ESP_ERR_INVALID_STATE;
-    }
-    ESP_LOGI(TAG, "Retrieved OpenThread instance: %p", (void *)instance);
-
-    if (!esp_openthread_lock_acquire(pdMS_TO_TICKS(5000))) {
-        ESP_LOGE(TAG, "Failed to acquire OpenThread lock within timeout.");
-        return ESP_FAIL;
-    }
-
-    auto *dataset = static_cast<otOperationalDataset *>(malloc(sizeof(otOperationalDataset)));
-    if (!dataset) {
-        ESP_LOGE(TAG, "Failed to allocate memory for dataset");
-        esp_openthread_lock_release();
-        return ESP_ERR_NO_MEM;
-    }
-    memset(dataset, 0, sizeof(otOperationalDataset));
-
-    dataset->mActiveTimestamp.mSeconds = 1;
-    dataset->mActiveTimestamp.mTicks = 0;
-    dataset->mActiveTimestamp.mAuthoritative = false;
-    dataset->mComponents.mIsActiveTimestampPresent = true;
-
-    dataset->mChannel = CONFIG_OPENTHREAD_NETWORK_CHANNEL;
-    dataset->mComponents.mIsChannelPresent = true;
-
-    dataset->mPanId = CONFIG_OPENTHREAD_NETWORK_PANID;
-    dataset->mComponents.mIsPanIdPresent = true;
-
-    esp_err_t err = otNetworkNameFromString(&dataset->mNetworkName, CONFIG_OPENTHREAD_NETWORK_NAME);
-    if (err != OT_ERROR_NONE) {
-        ESP_LOGE(TAG, "Failed to set Network Name: %s", esp_err_to_name(err));
-        free(dataset);
-        esp_openthread_lock_release();
-        return ESP_FAIL;
-    }
-    dataset->mComponents.mIsNetworkNamePresent = true;
-
-    size_t len = hex_string_to_bytes(CONFIG_OPENTHREAD_NETWORK_EXTPANID, dataset->mExtendedPanId.m8, sizeof(dataset->mExtendedPanId.m8));
-    if (len != sizeof(dataset->mExtendedPanId.m8)) {
-        ESP_LOGI(TAG, "Failed to set Extended PAN ID.");
-        free(dataset);
-        esp_openthread_lock_release();
-        return ESP_FAIL;
-    }
-    dataset->mComponents.mIsExtendedPanIdPresent = true;
-
-    otIp6Prefix prefix = {};
-    if (otIp6PrefixFromString(CONFIG_OPENTHREAD_MESH_LOCAL_PREFIX, &prefix) != OT_ERROR_NONE) {
-        ESP_LOGI(TAG, "Failed to parse Mesh Local Prefix: %s", CONFIG_OPENTHREAD_MESH_LOCAL_PREFIX);
-        free(dataset);
-        esp_openthread_lock_release();
-        return ESP_FAIL;
-    }
-    memcpy(dataset->mMeshLocalPrefix.m8, prefix.mPrefix.mFields.m8, sizeof(dataset->mMeshLocalPrefix.m8));
-    dataset->mComponents.mIsMeshLocalPrefixPresent = true;
-
-    len = hex_string_to_bytes(CONFIG_OPENTHREAD_NETWORK_MASTERKEY, dataset->mNetworkKey.m8, sizeof(dataset->mNetworkKey.m8));
-    if (len != sizeof(dataset->mNetworkKey.m8)) {
-        ESP_LOGE(TAG, "Failed to parse OpenThread network key: %s", esp_err_to_name(err));
-        free(dataset);
-        esp_openthread_lock_release();
-        return ESP_FAIL;
-    }
-    dataset->mComponents.mIsNetworkKeyPresent = true;
-
-    len = hex_string_to_bytes(CONFIG_OPENTHREAD_NETWORK_PSKC, dataset->mPskc.m8, sizeof(dataset->mPskc.m8));
-    if (len != sizeof(dataset->mPskc.m8)) {
-        ESP_LOGI(TAG, "Failed to set PSKc.");
-        free(dataset);
-        esp_openthread_lock_release();
-        return ESP_FAIL;
-    }
-    dataset->mComponents.mIsPskcPresent = true;
-
-    err = otDatasetSetActive(instance, dataset);
-    if (err != OT_ERROR_NONE) {
-        ESP_LOGE(TAG, "Failed to set OpenThread active dataset: %s", esp_err_to_name(err));
-        free(dataset);
-        esp_openthread_lock_release();
-        return ESP_FAIL;
-    }
-
-    free(dataset);
-    esp_openthread_lock_release();
-    ESP_LOGI(TAG, "OpenThread dataset initialization completed successfully.");
-    return ESP_OK;
 }
 
 esp_err_t thread_dataset_init(const uint16_t channel, const uint16_t pan_id, const char *network_name,

@@ -1,0 +1,9 @@
+menu "Wi‑Fi AP defaults"
+    config WIFI_AP_SSID_DEFAULT
+        string "Default AP SSID"
+        default "Old_MacDonald_AP"
+
+    config WIFI_AP_PASS_DEFAULT
+        string "Default AP password (min 8 chars)"
+        default "123456789"
+endmenu
