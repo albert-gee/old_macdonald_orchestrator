@@ -9,6 +9,14 @@
 extern "C" {
 #endif
 
+esp_err_t matter_controller_init(uint64_t node_id, uint64_t fabric_id, uint16_t listen_port,
+                                 void (*read_attribute_data_callback)(
+                                     uint64_t,
+                                     const chip::app::ConcreteDataAttributePath &,
+                                     chip::TLV::TLVReader *),
+                                 void (*subscribe_done_callback)(uint64_t remote_node_id, uint32_t subscription_id)
+);
+
 /**
  * @brief Commission a Matter device using BLE and Thread dataset.
  *
@@ -42,14 +50,9 @@ esp_err_t invoke_cluster_command(uint64_t destination_id, uint16_t endpoint_id, 
  * @param endpoint_id                 Endpoint containing the attribute.
  * @param cluster_id                  Cluster ID of the attribute.
  * @param attribute_id                Attribute ID to read.
- * @param read_attribute_data_callback Callback to handle attribute value.
  * @return esp_err_t                  ESP_OK on success, error code otherwise.
  */
-esp_err_t send_read_attr_command(uint64_t node_id, uint16_t endpoint_id, uint32_t cluster_id, uint32_t attribute_id,
-                                 void (*read_attribute_data_callback)(
-                                     uint64_t,
-                                     const chip::app::ConcreteDataAttributePath &,
-                                     chip::TLV::TLVReader *));
+esp_err_t send_read_attr_command(uint64_t node_id, uint16_t endpoint_id, uint32_t cluster_id, uint32_t attribute_id);
 
 /**
  * @brief Subscribe to a specific attribute and receive updates.
@@ -61,15 +64,11 @@ esp_err_t send_read_attr_command(uint64_t node_id, uint16_t endpoint_id, uint32_
  * @param min_interval      Minimum reporting interval (in seconds).
  * @param max_interval      Maximum reporting interval (in seconds).
  * @param auto_resubscribe  Automatically resubscribe on connection loss.
- * @param attribute_cb      Callback for attribute value updates.
- * @param done_cb           Callback when subscription is successfully established.
  * @return esp_err_t        ESP_OK on success, error code otherwise.
  */
 esp_err_t send_subscribe_attr_command(uint64_t node_id, uint16_t endpoint_id, uint32_t cluster_id,
                                       uint32_t attribute_id, uint16_t min_interval, uint16_t max_interval,
-                                      bool auto_resubscribe,
-                                      esp_matter::controller::attribute_report_cb_t attribute_cb,
-                                      esp_matter::controller::subscribe_done_cb_t done_cb);
+                                      bool auto_resubscribe);
 
 #ifdef __cplusplus
 }

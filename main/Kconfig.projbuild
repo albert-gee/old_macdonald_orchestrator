@@ -1,0 +1,35 @@
+menu "Old Macdonald - Matter Controller Defaults"
+
+    config MATTER_CONTROLLER_NODE_ID_DEFAULT
+        hex "Default Node ID of Matter Controller"
+        default 0x123456789ABCDEF0
+        range 0 0xFFFFFFFFFFFFFFFF
+        help
+            Default Node ID of Matter Controller.
+            This is the unique identifier for the Matter Controller in the network.
+            The default value is 0x123456789ABCDEF0, which is a random value.
+            You can change this value to any valid Node ID between 0 and 0xFFFFFFFFFFFFFFFF.
+
+    config MATTER_CONTROLLER_FABRIC_ID_DEFAULT
+        hex "Default Fabric ID of Matter Controller"
+        default 0x12345678
+        range 0 0xFFFFFFFF
+        help
+            Default Fabric ID of Matter Controller.
+            This is the unique identifier for the fabric in the network.
+            The default value is 0x12345678, which is a random value.
+            You can change this value to any valid Fabric ID between 0 and 0xFFFFFFFF.
+
+    config MATTER_CONTROLLER_LISTEN_PORT_DEFAULT
+        int "Default Listen Port of Matter Controller"
+        default 5540
+        range 1 65535
+        help
+            Default Listen Port of Matter Controller.
+            This is the port that the Matter Controller will listen on for incoming connections.
+            The default value is 5540, which is the standard port for Matter communication.
+            You can change this value to any valid port number between 1 and 65535.
+
+
+
+endmenu

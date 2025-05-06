@@ -2,78 +2,57 @@
 #define WIFI_INTERFACE_H
 
 #include <esp_err.h>
+#include "esp_event_base.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /**
- * @brief Update STA credentials in the Wi‑Fi driver (volatile only).
+ * @brief Initialize the Wi-Fi interface and register a Wi-Fi event handler.
  *
- * Applies the given SSID and password to the driver but does not save them
- * to NVS and does not initiate a (re)connection.
+ * This function sets up the default network interfaces for both Access Point
+ * (AP) and Station (STA) modes, registers the provided event handler for
+ * all Wi-Fi events, and initializes the Wi-Fi driver with default parameters.
  *
- * @param ssid      Null‑terminated SSID (1–32 bytes).
- * @param password  Null‑terminated passphrase (0–63 bytes); use an empty
- *                  string for open networks.
- *
- * @return ESP_OK on success, otherwise the esp_wifi_set_config() error code.
+ * @param event_handler Callback function to handle Wi-Fi events.
+ * @return ESP_OK on success, or an error code on failure.
  */
-esp_err_t set_wifi_sta_config(const char *ssid, const char *password);
-
+esp_err_t wifi_interface_init(esp_event_handler_t event_handler);
 
 /**
- * @brief Configure access‑point parameters in the driver.
+ * @brief Start the Wi-Fi driver and bring up network interfaces.
  *
- * If @p ap_password is shorter than eight characters, the AP is set to
- * WIFI_AUTH_OPEN; otherwise WPA2/WPA3‑PSK is enforced. This call neither
- * starts the AP nor persists the credentials.
+ * This function loads stored STA and AP (default if not stored) credentials,
+ * configures the operating mode (AP or AP+STA), and starts the Wi-Fi driver.
  *
- * @param ap_ssid     Null‑terminated SSID for the AP (1–32 bytes).
- * @param ap_password Null‑terminated passphrase (0–63 bytes).
- *
- * @return ESP_OK on success, or an error from ::esp_wifi_set_config.
+ * @return ESP_OK on success, or an error code on failure.
  */
-esp_err_t set_wifi_ap_config(const char *ap_ssid, const char *ap_password);
+esp_err_t wifi_interface_start(void);
 
 /**
- * @brief Initialise the ESP‑IDF Wi‑Fi driver and create default netifs.
+ * @brief Connect Wi-Fi STA to a network and persist credentials.
  *
- * Must be invoked once after boot—before any other Wi‑Fi functions.
+ * This function saves the provided SSID and password to non-volatile
+ * storage (NVS), applies the new STA configuration, and attempts to
+ * establish a connection to the specified network.
  *
- * @return ESP_OK on success, or an esp_err_t describing the failure.
- */
-esp_err_t wifi_interface_init(void);
-
-/**
- * @brief Start Wi‑Fi in simultaneous AP + STA mode.
- *
- * Loads credentials from NVS (or compile‑time defaults), applies them to the
- * driver, and starts the Wi‑Fi stack.
- *
- * @return ESP_OK on success, or an esp_err_t describing the failure.
- */
-esp_err_t start_wifi_ap_sta(void);
-
-/**
- * @brief Persist new station credentials, update the driver, and reconnect.
- *
- * @param ssid      New SSID.
- * @param password  New passphrase.
- *
- * @return ESP_OK on success, or an esp_err_t describing the failure.
+ * @param ssid      Null-terminated string of the Wi-Fi network SSID.
+ * @param password  Null-terminated string of the Wi-Fi network password.
+ * @return ESP_OK on success, or an error code on failure.
  */
 esp_err_t wifi_sta_connect(const char *ssid, const char *password);
 
 /**
- * @brief Persist new AP credentials and restart Wi‑Fi so changes take effect.
+ * @brief Restart Wi-Fi with new AP credentials
  *
- * Internally saves to NVS, then calls ::start_wifi_ap_sta().
+ * This function saves the provided AP SSID and password to non-volatile
+ * storage (NVS), reconfigures the AP interface, and restarts the Wi-Fi
+ * driver to apply the configuration changes.
  *
- * @param ap_ssid     New AP SSID.
- * @param ap_password New AP passphrase.
- *
- * @return ESP_OK on success, or an esp_err_t describing the failure.
+ * @param ap_ssid      Null-terminated string of the AP SSID.
+ * @param ap_password  Null-terminated string of the AP password.
+ * @return ESP_OK on success, or an error code on failure.
  */
 esp_err_t wifi_ap_set_credentials(const char *ap_ssid, const char *ap_password);
 

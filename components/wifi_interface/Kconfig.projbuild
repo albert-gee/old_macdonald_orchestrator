@@ -1,4 +1,4 @@
-menu "Wi‑Fi AP defaults"
+menu "Old Macdonald - Wi‑Fi AP defaults"
     config WIFI_AP_SSID_DEFAULT
         string "Default AP SSID"
         default "Old_MacDonald_AP"
