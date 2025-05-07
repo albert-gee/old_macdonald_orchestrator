@@ -1,4 +1,4 @@
-#include "json/json_outbound_message.h"
+#include "../../include/messages/json_outbound_message.h"
 #include "websocket_server.h"
 
 #include <esp_log.h>

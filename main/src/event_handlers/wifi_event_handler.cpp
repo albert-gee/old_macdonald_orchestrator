@@ -1,7 +1,7 @@
 #include "event_handlers/wifi_event_handler.h"
 
-#include "json/json_inbound_message.h"
-#include "json/json_outbound_message.h"
+#include "messages/json_inbound_message.h"
+#include "messages/json_outbound_message.h"
 #include "wifi_interface.h"
 #include "thread_util.h"
 #include "websocket_server.h"

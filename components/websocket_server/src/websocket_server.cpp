@@ -49,18 +49,6 @@ static void websocket_client_remove(int fd) {
     ESP_LOGW(TAG, "Client %d not found for removal", fd);
 }
 
-static websocket_client_t *websocket_client_find(int fd) {
-    websocket_client_t *c;
-
-    LIST_FOREACH(c, &clients, entries) {
-        if (c->fd == fd) {
-            return c;
-        }
-    }
-
-    return nullptr;
-}
-
 static void websocket_client_cleanup() {
     websocket_client_t *c, *tmp;
     for (c = LIST_FIRST(&clients); c != NULL;) {

@@ -4,7 +4,7 @@
 #include <portmacro.h>
 #include <esp_matter.h>
 
-#include "json/json_outbound_message.h"
+#include "../../include/messages/json_outbound_message.h"
 
 static const char *TAG = "CHIP_EVENT_HANDLER";
 

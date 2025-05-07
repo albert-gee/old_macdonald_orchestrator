@@ -1,4 +1,4 @@
-#include "json/json_inbound_message.h"
+#include "../../include/messages/json_inbound_message.h"
 #include "sdkconfig.h"
 #include "commands/commands.h"
 

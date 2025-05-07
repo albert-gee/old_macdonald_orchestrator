@@ -1,5 +1,5 @@
 #include "event_handlers/thread_event_handler.h"
-#include "json/json_outbound_message.h"
+#include "../../include/messages/json_outbound_message.h"
 #include "thread_util.h"
 
 #include <esp_log.h>
