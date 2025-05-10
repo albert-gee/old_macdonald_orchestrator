@@ -8,6 +8,7 @@ static const char *TAG = "WS_SERVER";
 static httpd_handle_t server = nullptr; // HTTP Server Instance Handle
 
 LIST_HEAD(client_list, websocket_client);
+
 client_list clients = LIST_HEAD_INITIALIZER(clients);
 
 
@@ -20,10 +21,10 @@ static void websocket_client_add(int fd) {
     websocket_client_t *c;
 
     LIST_FOREACH(c, &clients, entries) {
-        if (c->fd == fd) return;  // Already in list
+        if (c->fd == fd) return; // Already in list
     }
 
-    c = (websocket_client_t *)malloc(sizeof(websocket_client_t));
+    c = (websocket_client_t *) malloc(sizeof(websocket_client_t));
     if (!c) {
         ESP_LOGE(TAG, "Failed to allocate memory for new client");
         return;
@@ -59,6 +60,8 @@ static void websocket_client_cleanup() {
     }
 }
 
+/** This must return ESP_OK, or else the underlying socket will be closed
+ */
 static esp_err_t inbound_message_handler(httpd_req_t *request) {
 
     ESP_LOGI(TAG, "Websocket message received");
@@ -118,14 +121,13 @@ static esp_err_t inbound_message_handler(httpd_req_t *request) {
 
         // Call the JSON message handler
         ESP_LOGI(TAG, "Calling JSON request handler");
-        ret = inbound_message_handler_fun(reinterpret_cast<char *>(ws_frame.payload));
-        if (ret != ESP_OK) {
+        esp_err_t result = inbound_message_handler_fun(reinterpret_cast<char *>(ws_frame.payload));
+        if (result != ESP_OK) {
             ESP_LOGE(TAG, "Message handler failed: %s", esp_err_to_name(ret));
         }
 
         // Free the buffer
         free(buffer);
-
     }
 
     return ret;
@@ -226,3 +228,4 @@ esp_err_t websocket_broadcast_message(const char *message) {
 
     return last_err;
 }
+

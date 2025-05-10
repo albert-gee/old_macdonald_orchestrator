@@ -1,6 +1,8 @@
-#include "../../include/messages/json_inbound_message.h"
+#include "messages/json_inbound_message.h"
+#include "commands/matter_commands.h"
+#include "commands/wifi_commands.h"
+#include "commands/thread_commands.h"
 #include "sdkconfig.h"
-#include "commands/commands.h"
 
 #include <cJSON.h>
 #include <esp_event.h>
@@ -37,6 +39,10 @@ static bool parse_uint16(const char *s, uint16_t *out) {
 }
 
 static esp_err_t process_command_message(const char *action, const cJSON *payload) {
+    ESP_LOGI(TAG, "Processing command action: %s", action);
+
+    // Wi-Fi commands defined in wifi_command.h
+    // wifi.sta_connect
     if (strcmp(action, "wifi.sta_connect") == 0) {
         const cJSON *ssid = cJSON_GetObjectItem(payload, "ssid");
         const cJSON *password = cJSON_GetObjectItem(payload, "password");
@@ -48,7 +54,9 @@ static esp_err_t process_command_message(const char *action, const cJSON *payloa
         return execute_wifi_sta_connect_command(ssid->valuestring, password->valuestring);
     }
 
-    if (strcmp(action, "thread.init") == 0) {
+    // Thread commands defined in thread_command.h
+    // thread.network_init
+    if (strcmp(action, "thread.network_init") == 0) {
         return execute_thread_network_init_command(
             cJSON_GetObjectItem(payload, "channel")->valueint,
             cJSON_GetObjectItem(payload, "pan_id")->valueint,
@@ -59,16 +67,34 @@ static esp_err_t process_command_message(const char *action, const cJSON *payloa
             cJSON_GetObjectItem(payload, "pskc")->valuestring
         );
     }
-
-    if (strcmp(action, "thread.start") == 0) {
-        return execute_thread_start_command();
+    // thread.start
+    if (strcmp(action, "thread.enable") == 0) {
+        return execute_thread_enable_command();
+    }
+    // ifconfig.up
+    if (strcmp(action, "thread.disable") == 0) {
+        return execute_thread_disable_command();
     }
 
-    if (strcmp(action, "ifconfig.up") == 0) {
-        return execute_ifconfig_up_command();
-    }
+    // Matter commands defined in matter_command.h
+    // matter.controller_init
+    if (strcmp(action, "matter.controller_init") == 0) {
+        const cJSON *node_id = cJSON_GetObjectItem(payload, "node_id");
+        const cJSON *fabric_id = cJSON_GetObjectItem(payload, "fabric_id");
+        const cJSON *listen_port = cJSON_GetObjectItem(payload, "listen_port");
+        if (!cJSON_IsString(node_id) || !cJSON_IsNumber(fabric_id) || !cJSON_IsNumber(listen_port)) {
+            ESP_LOGW(TAG, "Invalid Matter init payload");
+            return ESP_ERR_INVALID_ARG;
+        }
 
-    if (strcmp(action, "pair.ble_thread") == 0) {
+        return execute_matter_controller_init_command(
+            static_cast<uint64_t>(node_id->valueint),
+            static_cast<uint64_t>(fabric_id->valuedouble),
+            static_cast<uint16_t>(listen_port->valueint)
+        );
+    }
+    // matter.pair_ble_thread
+    if (strcmp(action, "matter.pair_ble_thread") == 0) {
         const cJSON *node_id = cJSON_GetObjectItem(payload, "node_id");
         const cJSON *setup_code = cJSON_GetObjectItem(payload, "setup_code");
         const cJSON *discriminator = cJSON_GetObjectItem(payload, "discriminator");
@@ -84,10 +110,11 @@ static esp_err_t process_command_message(const char *action, const cJSON *payloa
             return ESP_ERR_INVALID_ARG;
         }
 
-        return execute_pair_ble_thread_command(node_id_val, pin, disc);
+        return execute_matter_pair_ble_thread_command(node_id_val, pin, disc);
     }
 
-    if (strcmp(action, "cluster_command.invoke") == 0) {
+    // matter.cluster_command_invoke
+    if (strcmp(action, "matter.cluster_command_invoke") == 0) {
         const cJSON *dest = cJSON_GetObjectItem(payload, "destination_id");
         const cJSON *ep = cJSON_GetObjectItem(payload, "endpoint_id");
         const cJSON *cluster = cJSON_GetObjectItem(payload, "cluster_id");
@@ -107,7 +134,8 @@ static esp_err_t process_command_message(const char *action, const cJSON *payloa
                                               data->valuestring);
     }
 
-    if (strcmp(action, "attribute.read") == 0) {
+    // matter.attribute_read
+    if (strcmp(action, "matter.attribute_read") == 0) {
         const cJSON *node = cJSON_GetObjectItem(payload, "node_id");
         const cJSON *ep = cJSON_GetObjectItem(payload, "endpoint_id");
         const cJSON *cluster = cJSON_GetObjectItem(payload, "cluster_id");
@@ -124,7 +152,8 @@ static esp_err_t process_command_message(const char *action, const cJSON *payloa
             static_cast<uint32_t>(attr->valueint));
     }
 
-    if (strcmp(action, "attribute.subscribe") == 0) {
+    // matter.attribute_subscribe
+    if (strcmp(action, "matter.attribute_subscribe") == 0) {
         const cJSON *node = cJSON_GetObjectItem(payload, "node_id");
         const cJSON *ep = cJSON_GetObjectItem(payload, "endpoint_id");
         const cJSON *cluster = cJSON_GetObjectItem(payload, "cluster_id");
@@ -144,22 +173,6 @@ static esp_err_t process_command_message(const char *action, const cJSON *payloa
             static_cast<uint32_t>(attr->valueint),
             static_cast<uint16_t>(min->valueint),
             static_cast<uint16_t>(max->valueint)
-        );
-    }
-
-    if (strcmp(action, "matter_controller.init") == 0) {
-        const cJSON *node_id = cJSON_GetObjectItem(payload, "node_id");
-        const cJSON *fabric_id = cJSON_GetObjectItem(payload, "fabric_id");
-        const cJSON *listen_port = cJSON_GetObjectItem(payload, "listen_port");
-        if (!cJSON_IsString(node_id) || !cJSON_IsNumber(fabric_id) || !cJSON_IsNumber(listen_port)) {
-            ESP_LOGW(TAG, "Invalid Matter init payload");
-            return ESP_ERR_INVALID_ARG;
-        }
-
-        return execute_init_matter_controller_command(
-            static_cast<uint64_t>(node_id->valueint),
-            static_cast<uint64_t>(fabric_id->valuedouble),
-            static_cast<uint16_t>(listen_port->valueint)
         );
     }
 
@@ -185,10 +198,12 @@ esp_err_t handle_json_inbound_message(const char *inbound_message) {
 
     esp_err_t ret = ESP_OK;
 
+    // Validate the message structure: type, action, payload
     if (!cJSON_IsString(type)) {
         ESP_LOGW(TAG, "Invalid or missing 'type' (expected: 'command')");
         ret = ESP_ERR_INVALID_ARG;
-    } else if (!cJSON_IsString(action)) {
+    }
+    else if (!cJSON_IsString(action)) {
         ESP_LOGW(TAG, "Missing or invalid 'action' field");
         ret = ESP_ERR_INVALID_ARG;
     } else if (!cJSON_IsObject(payload)) {
@@ -196,10 +211,9 @@ esp_err_t handle_json_inbound_message(const char *inbound_message) {
         ret = ESP_ERR_INVALID_ARG;
     }
 
-    if (strcmp(type->valuestring, "command") == 0) {
+    // If the message is valid, process it
+    if (ret == ESP_OK && strcmp(type->valuestring, "command") == 0) {
         ret = process_command_message(action->valuestring, payload);
-    } else {
-        ESP_LOGW(TAG, "Unsupported message type");
     }
 
     cJSON_Delete(root);

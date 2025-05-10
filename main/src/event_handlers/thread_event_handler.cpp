@@ -20,7 +20,7 @@ void handle_thread_event(void *arg, const esp_event_base_t event_base, const int
     switch (event_id) {
         case OPENTHREAD_EVENT_START:
             ESP_LOGI(TAG, "OpenThread started");
-            create_info_thread_status_message("started");
+            // create_info_thread_status_message("started");
             break;
 
         case OPENTHREAD_EVENT_DATASET_CHANGED:
