@@ -8,22 +8,34 @@
 extern "C" {
 #endif
 
+// ---- WI-FI ----
+
 esp_err_t create_info_wifi_status_message(const char *status);
 
-esp_err_t create_info_thread_role_message(const char *role);
 
-esp_err_t create_info_ifconfig_status_message(const char *status);
+// ---- THREAD ----
 
+/**
+ * Sends the Thread operational status: "Running" or "Stopped"
+ */
 esp_err_t create_info_thread_status_message(const char *status);
 
-esp_err_t create_info_sensor_temperature_message(const char *value);
+/**
+ * Sends the current Thread role: "Disabled", "Detached", "Child", "Router", or "Leader"
+ */
+esp_err_t create_info_thread_role_message(const char *role);
 
-esp_err_t create_info_thread_dataset_active_message(uint64_t active_timestamp, uint64_t pending_timestamp,
-                                                    const uint8_t *network_key, const char *network_name,
-                                                    const uint8_t *extended_pan_id, const uint8_t *mesh_local_prefix,
-                                                    uint32_t delay, uint16_t pan_id, uint16_t channel,
-                                                    uint16_t wakeup_channel, const uint8_t *pskc,
-                                                    size_t mesh_local_prefix_size);
+/**
+ * Sends the current Thread dataset
+ */
+esp_err_t create_info_thread_dataset_active_message(uint64_t active_timestamp,
+    const char *network_name,
+    const uint8_t *extended_pan_id,
+    const uint8_t *mesh_local_prefix,
+    uint16_t pan_id,
+    uint16_t channel);
+
+// ---- MATTER ----
 
 esp_err_t create_info_matter_commissioning_complete_message(uint64_t nodeId, uint8_t fabricIndex);
 

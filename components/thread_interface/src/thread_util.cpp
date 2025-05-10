@@ -249,24 +249,20 @@ esp_err_t thread_stop() {
     return ESP_OK;
 }
 
-esp_err_t thread_get_device_role_name(char *device_role_name) {
+esp_err_t thread_get_device_role_name(char *&device_role_name) {
+    // Get the OpenThread instance.
     otInstance *openThreadInstance = esp_openthread_get_instance();
     if (!openThreadInstance) {
         return ESP_FAIL;
     }
 
-    otDeviceRole role = otThreadGetDeviceRole(openThreadInstance);
+    // Get device role and its string representation.
+    const otDeviceRole role = otThreadGetDeviceRole(openThreadInstance);
+    const char *roleName = otThreadDeviceRoleToString(role);
 
-    const char *role_str = "Unknown";
-    switch (role) {
-        case OT_DEVICE_ROLE_DISABLED: role_str = "Disabled"; break;
-        case OT_DEVICE_ROLE_DETACHED: role_str = "Detached"; break;
-        case OT_DEVICE_ROLE_CHILD: role_str = "Child"; break;
-        case OT_DEVICE_ROLE_ROUTER: role_str = "Router"; break;
-        case OT_DEVICE_ROLE_LEADER: role_str = "Leader"; break;
-    }
+    // Assign the role name string.
+    device_role_name = const_cast<char *>(roleName);
 
-    snprintf(device_role_name, 22, "%s", role_str);
     return ESP_OK;
 }
 
