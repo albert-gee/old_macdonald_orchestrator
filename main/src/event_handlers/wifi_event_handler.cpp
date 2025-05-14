@@ -10,7 +10,6 @@
 static const char *TAG = "WIFI_EVENT_HANDLER";
 
 void handle_wifi_event(void *arg, esp_event_base_t event_base, int32_t event_id, void *event_data) {
-    esp_err_t err = ESP_OK;
 
     switch (event_id) {
         case WIFI_EVENT_STA_START:

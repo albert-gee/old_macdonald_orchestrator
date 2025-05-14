@@ -41,6 +41,31 @@ static bool parse_uint16(const char *s, uint16_t *out) {
 static esp_err_t process_command_message(const char *action, const cJSON *payload) {
     ESP_LOGI(TAG, "Processing command action: %s", action);
 
+    // Thread commands defined in thread_command.h
+    // thread.dataset_init
+    if (strcmp(action, "thread.dataset.init") == 0) {
+        return execute_thread_dataset_init_command(
+            cJSON_GetObjectItem(payload, "channel")->valueint,
+            cJSON_GetObjectItem(payload, "pan_id")->valueint,
+            cJSON_GetObjectItem(payload, "network_name")->valuestring,
+            cJSON_GetObjectItem(payload, "extended_pan_id")->valuestring,
+            cJSON_GetObjectItem(payload, "mesh_local_prefix")->valuestring,
+            cJSON_GetObjectItem(payload, "master_key")->valuestring,
+            cJSON_GetObjectItem(payload, "pskc")->valuestring
+        );
+    }
+    // thread.enable
+    if (strcmp(action, "thread.enable") == 0) {
+        return execute_thread_enable_command();
+    }
+    // thread.disable
+    if (strcmp(action, "thread.disable") == 0) {
+        return execute_thread_disable_command();
+    }
+
+
+
+
     // Wi-Fi commands defined in wifi_command.h
     // wifi.sta_connect
     if (strcmp(action, "wifi.sta_connect") == 0) {
@@ -52,28 +77,6 @@ static esp_err_t process_command_message(const char *action, const cJSON *payloa
         }
 
         return execute_wifi_sta_connect_command(ssid->valuestring, password->valuestring);
-    }
-
-    // Thread commands defined in thread_command.h
-    // thread.network_init
-    if (strcmp(action, "thread.network_init") == 0) {
-        return execute_thread_network_init_command(
-            cJSON_GetObjectItem(payload, "channel")->valueint,
-            cJSON_GetObjectItem(payload, "pan_id")->valueint,
-            cJSON_GetObjectItem(payload, "network_name")->valuestring,
-            cJSON_GetObjectItem(payload, "extended_pan_id")->valuestring,
-            cJSON_GetObjectItem(payload, "mesh_local_prefix")->valuestring,
-            cJSON_GetObjectItem(payload, "master_key")->valuestring,
-            cJSON_GetObjectItem(payload, "pskc")->valuestring
-        );
-    }
-    // thread.start
-    if (strcmp(action, "thread.enable") == 0) {
-        return execute_thread_enable_command();
-    }
-    // ifconfig.up
-    if (strcmp(action, "thread.disable") == 0) {
-        return execute_thread_disable_command();
     }
 
     // Matter commands defined in matter_command.h

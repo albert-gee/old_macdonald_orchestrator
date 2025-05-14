@@ -78,6 +78,11 @@ static esp_err_t inbound_message_handler(httpd_req_t *request) {
         // Add the client to the management system
         websocket_client_add(client_fd);
         ESP_LOGI(TAG, "New WebSocket connection, FD: %d", client_fd);
+
+        // Send confirmation message
+        const auto hello_msg = R"({"type":"connected","status":"ok"})";
+        websocket_send_message_to_client(client_fd, hello_msg);
+
         return ESP_OK;
     }
 

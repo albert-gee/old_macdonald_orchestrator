@@ -1,70 +1,84 @@
 #include "thread_util.h"
 
-#include <esp_log.h>
 #include <esp_check.h>
+#include <esp_log.h>
 #include <esp_openthread.h>
 #include <esp_openthread_border_router.h>
 #include <esp_openthread_lock.h>
 #include <portmacro.h>
+
 #include <openthread/dataset.h>
 #include <openthread/dataset_ftd.h>
 #include <openthread/instance.h>
 #include <openthread/thread.h>
+#include <cstring>
 
 static const char *TAG = "THREAD_UTIL";
 
-/**
- * @brief Converts a hexadecimal character to its integer value.
- *
- * This function converts a character ('0'-'9', 'A'-'F', 'a'-'f') to its
- * corresponding integer value (0-15). If the character is invalid, it returns -1.
- *
- * @param hex The hexadecimal character to convert.
- * @return The integer value (0-15) or -1 if the input is invalid.
- */
-static int hex_char_to_int(const char hex)
-{
-    if ('A' <= hex && hex <= 'F') {
-        return 10 + hex - 'A';
+// -----------------------------------------------------------------------------
+// Interface Control
+// -----------------------------------------------------------------------------
+
+esp_err_t ifconfig_up() {
+    esp_openthread_lock_acquire(portMAX_DELAY);
+
+    otInstance *instance = esp_openthread_get_instance();
+    if (!instance) {
+        ESP_LOGE(TAG, "OpenThread instance is NULL");
+        esp_openthread_lock_release();
+        return ESP_ERR_INVALID_STATE;
     }
-    if ('a' <= hex && hex <= 'f') {
-        return 10 + hex - 'a';
+
+    const esp_err_t err = (otIp6SetEnabled(instance, true) == OT_ERROR_NONE) ? ESP_OK : ESP_FAIL;
+    esp_openthread_lock_release();
+
+    return err;
+}
+
+esp_err_t ifconfig_down() {
+    esp_openthread_lock_acquire(portMAX_DELAY);
+
+    otInstance *instance = esp_openthread_get_instance();
+    if (!instance) {
+        ESP_LOGE(TAG, "OpenThread instance is NULL");
+        esp_openthread_lock_release();
+        return ESP_ERR_INVALID_STATE;
     }
-    if ('0' <= hex && hex <= '9') {
-        return hex - '0';
-    }
+
+    const esp_err_t err = (otIp6SetEnabled(instance, false) == OT_ERROR_NONE) ? ESP_OK : ESP_FAIL;
+    esp_openthread_lock_release();
+
+    return err;
+}
+
+esp_err_t thread_get_interface_name(char *interface_name) {
+    if (!interface_name) return ESP_ERR_INVALID_ARG;
+
+    strcpy(interface_name, "OPENTHREAD");
+    return ESP_OK;
+}
+
+// -----------------------------------------------------------------------------
+// Dataset Configuration
+// -----------------------------------------------------------------------------
+
+static int hex_char_to_int(char hex) {
+    if ('0' <= hex && hex <= '9') return hex - '0';
+    if ('a' <= hex && hex <= 'f') return hex - 'a' + 10;
+    if ('A' <= hex && hex <= 'F') return hex - 'A' + 10;
     return -1;
 }
 
-/**
- * @brief Converts a hexadecimal string to a byte array.
- *
- * This function converts a string of hexadecimal characters into a byte array.
- * The string must have twice the length of the output buffer. If the string
- * is invalid or the lengths don't match, the function returns 0.
- *
- * @param hex_string The null-terminated hexadecimal string to convert.
- * @param output_buffer The buffer to store the resulting byte array.
- * @param output_size The size of the output buffer in bytes.
- * @return The number of bytes written to the output buffer, or 0 if the conversion fails.
- */
-static size_t hex_string_to_bytes(const char *hex_string, uint8_t *output_buffer, const size_t output_size)
-{
-    const size_t hex_string_length = strlen(hex_string);
+static size_t hex_string_to_bytes(const char *hex_string, uint8_t *output_buffer, const size_t output_size) {
+    if (!hex_string || !output_buffer) return 0;
 
-    if (hex_string_length != output_size * 2) {
-        return 0;
-    }
+    if (size_t hex_len = strlen(hex_string); hex_len != output_size * 2) return 0;
 
-    for (size_t i = 0; i < hex_string_length; i += 2) {
-        const int high_nibble = hex_char_to_int(hex_string[i]);
-        const int low_nibble = hex_char_to_int(hex_string[i + 1]);
-
-        if (high_nibble < 0 || low_nibble < 0) {
-            return 0;
-        }
-
-        output_buffer[i / 2] = (high_nibble << 4) + low_nibble;
+    for (size_t i = 0; i < output_size; ++i) {
+        const int high = hex_char_to_int(hex_string[i * 2]);
+        const int low  = hex_char_to_int(hex_string[i * 2 + 1]);
+        if (high < 0 || low < 0) return 0;
+        output_buffer[i] = static_cast<uint8_t>((high << 4) | low);
     }
 
     return output_size;
@@ -72,33 +86,19 @@ static size_t hex_string_to_bytes(const char *hex_string, uint8_t *output_buffer
 
 esp_err_t thread_dataset_init(const uint16_t channel, const uint16_t pan_id, const char *network_name,
                               const char *extended_pan_id, const char *mesh_local_prefix,
-                              const char *network_key, const char *pskc)
-{
-    ESP_LOGI(TAG, "Initializing new OpenThread dataset...");
-
+                              const char *network_key, const char *pskc) {
     otInstance *instance = esp_openthread_get_instance();
-    if (!instance) {
-        ESP_LOGE(TAG, "OpenThread instance is NULL");
-        return ESP_ERR_INVALID_STATE;
-    }
-    ESP_LOGI(TAG, "Retrieved OpenThread instance: %p", (void *)instance);
+    if (!instance) return ESP_ERR_INVALID_STATE;
 
-    if (!esp_openthread_lock_acquire(pdMS_TO_TICKS(5000))) {
-        ESP_LOGE(TAG, "Failed to acquire OpenThread lock within timeout.");
-        return ESP_FAIL;
-    }
+    if (!esp_openthread_lock_acquire(pdMS_TO_TICKS(5000))) return ESP_FAIL;
 
-    auto *dataset = static_cast<otOperationalDataset *>(malloc(sizeof(otOperationalDataset)));
+    auto *dataset = static_cast<otOperationalDataset *>(calloc(1, sizeof(otOperationalDataset)));
     if (!dataset) {
-        ESP_LOGE(TAG, "Failed to allocate memory for dataset");
         esp_openthread_lock_release();
         return ESP_ERR_NO_MEM;
     }
-    memset(dataset, 0, sizeof(otOperationalDataset));
 
     dataset->mActiveTimestamp.mSeconds = 1;
-    dataset->mActiveTimestamp.mTicks = 0;
-    dataset->mActiveTimestamp.mAuthoritative = false;
     dataset->mComponents.mIsActiveTimestampPresent = true;
 
     dataset->mChannel = channel;
@@ -107,18 +107,14 @@ esp_err_t thread_dataset_init(const uint16_t channel, const uint16_t pan_id, con
     dataset->mPanId = pan_id;
     dataset->mComponents.mIsPanIdPresent = true;
 
-    esp_err_t err = otNetworkNameFromString(&dataset->mNetworkName, network_name);
-    if (err != OT_ERROR_NONE) {
-        ESP_LOGE(TAG, "Failed to set Network Name: %s", esp_err_to_name(err));
+    if (otNetworkNameFromString(&dataset->mNetworkName, network_name) != OT_ERROR_NONE) {
         free(dataset);
         esp_openthread_lock_release();
         return ESP_FAIL;
     }
     dataset->mComponents.mIsNetworkNamePresent = true;
 
-    size_t len = hex_string_to_bytes(extended_pan_id, dataset->mExtendedPanId.m8, sizeof(dataset->mExtendedPanId.m8));
-    if (len != sizeof(dataset->mExtendedPanId.m8)) {
-        ESP_LOGI(TAG, "Failed to set Extended PAN ID.");
+    if (hex_string_to_bytes(extended_pan_id, dataset->mExtendedPanId.m8, sizeof(dataset->mExtendedPanId.m8)) != sizeof(dataset->mExtendedPanId.m8)) {
         free(dataset);
         esp_openthread_lock_release();
         return ESP_FAIL;
@@ -127,7 +123,6 @@ esp_err_t thread_dataset_init(const uint16_t channel, const uint16_t pan_id, con
 
     otIp6Prefix prefix = {};
     if (otIp6PrefixFromString(mesh_local_prefix, &prefix) != OT_ERROR_NONE) {
-        ESP_LOGI(TAG, "Failed to parse Mesh Local Prefix: %s", mesh_local_prefix);
         free(dataset);
         esp_openthread_lock_release();
         return ESP_FAIL;
@@ -135,198 +130,186 @@ esp_err_t thread_dataset_init(const uint16_t channel, const uint16_t pan_id, con
     memcpy(dataset->mMeshLocalPrefix.m8, prefix.mPrefix.mFields.m8, sizeof(dataset->mMeshLocalPrefix.m8));
     dataset->mComponents.mIsMeshLocalPrefixPresent = true;
 
-    len = hex_string_to_bytes(network_key, dataset->mNetworkKey.m8, sizeof(dataset->mNetworkKey.m8));
-    if (len != sizeof(dataset->mNetworkKey.m8)) {
-        ESP_LOGE(TAG, "Failed to parse OpenThread network key: %s", esp_err_to_name(err));
+    if (hex_string_to_bytes(network_key, dataset->mNetworkKey.m8, sizeof(dataset->mNetworkKey.m8)) != sizeof(dataset->mNetworkKey.m8)) {
         free(dataset);
         esp_openthread_lock_release();
         return ESP_FAIL;
     }
     dataset->mComponents.mIsNetworkKeyPresent = true;
 
-    len = hex_string_to_bytes(pskc, dataset->mPskc.m8, sizeof(dataset->mPskc.m8));
-    if (len != sizeof(dataset->mPskc.m8)) {
-        ESP_LOGI(TAG, "Failed to set PSKc.");
+    if (hex_string_to_bytes(pskc, dataset->mPskc.m8, sizeof(dataset->mPskc.m8)) != sizeof(dataset->mPskc.m8)) {
         free(dataset);
         esp_openthread_lock_release();
         return ESP_FAIL;
     }
     dataset->mComponents.mIsPskcPresent = true;
 
-    err = otDatasetSetActive(instance, dataset);
-    if (err != OT_ERROR_NONE) {
-        ESP_LOGE(TAG, "Failed to set OpenThread active dataset: %s", esp_err_to_name(err));
-        free(dataset);
-        esp_openthread_lock_release();
-        return ESP_FAIL;
-    }
+    esp_err_t result = (otDatasetSetActive(instance, dataset) == OT_ERROR_NONE) ? ESP_OK : ESP_FAIL;
 
     free(dataset);
     esp_openthread_lock_release();
-    ESP_LOGI(TAG, "OpenThread dataset initialization completed successfully.");
-    return ESP_OK;
+    return result;
 }
 
-esp_err_t ifconfig_up() {
-    esp_openthread_lock_acquire(portMAX_DELAY);
-
-
-    ESP_LOGI(TAG, "Entering ifconfig_up");
-
-
-    otInstance *openThreadInstance = esp_openthread_get_instance();
-    if (!openThreadInstance) {
-        ESP_LOGE(TAG, "OpenThread instance is NULL");
-        return ESP_ERR_INVALID_STATE;
-    }
-    ESP_LOGI(TAG, "OpenThread instance is valid");
-
-    if (otIp6SetEnabled(openThreadInstance, true) != OT_ERROR_NONE) {
-        ESP_LOGE(TAG, "Failed to enable OpenThread IPv6 interface");
-        esp_openthread_lock_release(); // Release the lock before returning
-        return ESP_FAIL;
-    }
-    ESP_LOGI(TAG, "Successfully enabled OpenThread IPv6 interface");
-
-    esp_openthread_lock_release();
-    ESP_LOGI(TAG, "Releasing OpenThread lock");
-
-    return ESP_OK;
-}
-
-esp_err_t ifconfig_down() {
-
-    esp_openthread_lock_acquire(portMAX_DELAY);
-
-    otInstance *openThreadInstance = esp_openthread_get_instance();
-    if (!openThreadInstance) {
-        ESP_LOGE(TAG, "OpenThread instance is NULL");
-        return ESP_ERR_INVALID_STATE;
-    }
-
-    if (otIp6SetEnabled(openThreadInstance, false) != OT_ERROR_NONE) {
-        ESP_LOGE(TAG, "Failed to disable OpenThread IPv6 interface");
-        esp_openthread_lock_release(); // Release the lock before returning
-        return ESP_FAIL;
-    }
-
-    esp_openthread_lock_release();
-
-    return ESP_OK;
-}
+// -----------------------------------------------------------------------------
+// Stack Control
+// -----------------------------------------------------------------------------
 
 esp_err_t thread_start() {
-    otInstance *openThreadInstance = esp_openthread_get_instance();
-    ESP_RETURN_ON_ERROR(openThreadInstance ? ESP_OK : ESP_FAIL, TAG, "OpenThread instance is not initialized");
+    otInstance *instance = esp_openthread_get_instance();
+    if (!instance) return ESP_ERR_INVALID_STATE;
 
     esp_openthread_lock_acquire(portMAX_DELAY);
-
-    if (otThreadSetEnabled(openThreadInstance, true) != OT_ERROR_NONE) {
-        ESP_LOGE(TAG, "Failed to enable OpenThread");
-        esp_openthread_lock_release(); // Release the lock before returning
-        return ESP_FAIL;
-    }
-
+    const bool success = (otThreadSetEnabled(instance, true) == OT_ERROR_NONE);
     esp_openthread_lock_release();
 
-    return ESP_OK;
+    return success ? ESP_OK : ESP_FAIL;
 }
 
 esp_err_t thread_stop() {
-    otInstance *openThreadInstance = esp_openthread_get_instance();
-    ESP_RETURN_ON_ERROR(openThreadInstance ? ESP_OK : ESP_FAIL, TAG, "OpenThread instance is not initialized");
+    otInstance *instance = esp_openthread_get_instance();
+    if (!instance) return ESP_ERR_INVALID_STATE;
 
     esp_openthread_lock_acquire(portMAX_DELAY);
-
-    if (otThreadSetEnabled(openThreadInstance, false) != OT_ERROR_NONE) {
-        ESP_LOGE(TAG, "Failed to disable OpenThread");
-        esp_openthread_lock_release(); // Release the lock before returning
-        return ESP_FAIL;
-    }
-
+    const bool success = (otThreadSetEnabled(instance, false) == OT_ERROR_NONE);
     esp_openthread_lock_release();
 
+    return success ? ESP_OK : ESP_FAIL;
+}
+
+// -----------------------------------------------------------------------------
+// Query Functions
+// -----------------------------------------------------------------------------
+
+esp_err_t thread_is_stack_running(bool *is_running) {
+    if (!is_running) return ESP_ERR_INVALID_ARG;
+
+    otInstance *instance = esp_openthread_get_instance();
+    if (!instance) return ESP_ERR_INVALID_STATE;
+
+    *is_running = (otThreadGetDeviceRole(instance) != OT_DEVICE_ROLE_DISABLED);
     return ESP_OK;
 }
 
-esp_err_t thread_get_device_role_name(char *&device_role_name) {
-    // Get the OpenThread instance.
-    otInstance *openThreadInstance = esp_openthread_get_instance();
-    if (!openThreadInstance) {
-        return ESP_FAIL;
+esp_err_t thread_is_attached(bool *is_attached) {
+    if (!is_attached) return ESP_ERR_INVALID_ARG;
+
+    otInstance *instance = esp_openthread_get_instance();
+    if (!instance) return ESP_ERR_INVALID_STATE;
+
+    otDeviceRole role = otThreadGetDeviceRole(instance);
+    *is_attached = (role != OT_DEVICE_ROLE_DISABLED && role != OT_DEVICE_ROLE_DETACHED);
+    return ESP_OK;
+}
+
+esp_err_t thread_get_device_role_string(const char **role_str) {
+    otInstance *instance = esp_openthread_get_instance();
+    if (!instance || !role_str) return ESP_ERR_INVALID_ARG;
+
+    *role_str = otThreadDeviceRoleToString(otThreadGetDeviceRole(instance));
+    return ESP_OK;
+}
+
+esp_err_t thread_get_unicast_addresses(char **out_addresses, size_t max, size_t *out_count) {
+    otInstance *instance = esp_openthread_get_instance();
+    if (!instance || !out_addresses || !out_count) return ESP_ERR_INVALID_ARG;
+
+    const otNetifAddress *addr = otIp6GetUnicastAddresses(instance);
+    size_t count = 0;
+
+    while (addr && count < max) {
+        char temp[40] = {};
+        otIp6AddressToString(&addr->mAddress, temp, sizeof(temp));
+        out_addresses[count] = strdup(temp);
+        if (!out_addresses[count]) return ESP_ERR_NO_MEM;
+        addr = addr->mNext;
+        count++;
     }
 
-    // Get device role and its string representation.
-    const otDeviceRole role = otThreadGetDeviceRole(openThreadInstance);
-    const char *roleName = otThreadDeviceRoleToString(role);
-
-    // Assign the role name string.
-    device_role_name = const_cast<char *>(roleName);
-
+    *out_count = count;
     return ESP_OK;
 }
 
+esp_err_t thread_get_multicast_addresses(char **out_addresses, size_t max, size_t *out_count) {
+    otInstance *instance = esp_openthread_get_instance();
+    if (!instance || !out_addresses || !out_count) return ESP_ERR_INVALID_ARG;
+
+    const otNetifMulticastAddress *addr = otIp6GetMulticastAddresses(instance);
+    size_t count = 0;
+
+    while (addr && count < max) {
+        char temp[40] = {};
+        otIp6AddressToString(&addr->mAddress, temp, sizeof(temp));
+        out_addresses[count] = strdup(temp);
+        if (!out_addresses[count]) return ESP_ERR_NO_MEM;
+        addr = addr->mNext;
+        count++;
+    }
+
+    *out_count = count;
+    return ESP_OK;
+}
+
+void thread_free_address_list(char **addresses, size_t count) {
+    for (size_t i = 0; i < count; ++i) {
+        free(addresses[i]);
+    }
+}
 
 esp_err_t thread_get_active_dataset(otOperationalDataset *dataset) {
-
-    otInstance *openThreadInstance = esp_openthread_get_instance();
-    ESP_RETURN_ON_ERROR(openThreadInstance ? ESP_OK : ESP_FAIL, TAG, "OpenThread instance is not initialized");
+    otInstance *instance = esp_openthread_get_instance();
+    if (!instance || !dataset) return ESP_ERR_INVALID_ARG;
 
     esp_openthread_lock_acquire(portMAX_DELAY);
-
-    if (otDatasetGetActive(openThreadInstance, dataset) != OT_ERROR_NONE) {
-        ESP_LOGE(TAG, "Failed to get active dataset");
-        esp_openthread_lock_release(); // Release the lock before returning
-        return ESP_FAIL;
-    }
-
+    bool success = (otDatasetGetActive(instance, dataset) == OT_ERROR_NONE);
     esp_openthread_lock_release();
 
-    return ESP_OK;
+    return success ? ESP_OK : ESP_FAIL;
 }
 
-esp_err_t thread_get_active_dataset_tlvs(uint8_t *mTlvs, uint8_t *mLength) {
-    if (!mTlvs || !mLength) {
-        ESP_LOGE(TAG, "Invalid buffer pointer");
-        return ESP_ERR_INVALID_ARG;
-    }
+esp_err_t thread_get_active_dataset_tlvs(uint8_t *dataset_tlvs, uint8_t *dataset_len) {
+    if (!dataset_tlvs || !dataset_len) return ESP_ERR_INVALID_ARG;
 
-    otInstance *openThreadInstance = esp_openthread_get_instance();
-    ESP_RETURN_ON_ERROR(openThreadInstance ? ESP_OK : ESP_FAIL, TAG, "OpenThread instance is not initialized");
+    otInstance *instance = esp_openthread_get_instance();
+    if (!instance) return ESP_ERR_INVALID_STATE;
 
     esp_openthread_lock_acquire(portMAX_DELAY);
 
-    otOperationalDatasetTlvs dataset_tlvs = {0}; // Initialize the structure
-
-    if (otDatasetGetActiveTlvs(openThreadInstance, &dataset_tlvs) != OT_ERROR_NONE) {
-        ESP_LOGE(TAG, "Failed to get active dataset TLVs");
+    otOperationalDatasetTlvs tlvs = {};
+    if (otDatasetGetActiveTlvs(instance, &tlvs) != OT_ERROR_NONE) {
         esp_openthread_lock_release();
         return ESP_FAIL;
     }
 
-    if (dataset_tlvs.mLength > *mLength) {
-        ESP_LOGE(TAG, "Buffer too small for dataset TLVs");
+    if (tlvs.mLength > *dataset_len) {
         esp_openthread_lock_release();
         return ESP_ERR_NO_MEM;
     }
 
-    memcpy(mTlvs, dataset_tlvs.mTlvs, dataset_tlvs.mLength);
-    *mLength = dataset_tlvs.mLength;
+    memcpy(dataset_tlvs, tlvs.mTlvs, tlvs.mLength);
+    *dataset_len = tlvs.mLength;
 
     esp_openthread_lock_release();
-
     return ESP_OK;
 }
 
+// -----------------------------------------------------------------------------
+// Border Router
+// -----------------------------------------------------------------------------
 
 esp_err_t thread_br_init() {
     esp_openthread_set_backbone_netif(esp_netif_get_handle_from_ifkey("WIFI_STA_DEF"));
 
-    esp_err_t err = ESP_OK;
-
     esp_openthread_lock_acquire(portMAX_DELAY);
-    err = esp_openthread_border_router_init();
+    const esp_err_t err = esp_openthread_border_router_init();
     esp_openthread_lock_release();
 
+    return err;
+}
+
+esp_err_t thread_br_deinit(void) {
+    esp_openthread_lock_acquire(portMAX_DELAY);
+    esp_err_t err = esp_openthread_border_router_deinit();
+    esp_openthread_lock_release();
     return err;
 }
