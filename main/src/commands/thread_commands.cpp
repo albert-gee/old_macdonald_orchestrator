@@ -79,7 +79,7 @@ esp_err_t execute_thread_active_dataset_get_command(char *json_buf, size_t buf_s
     }
 
     strncpy(json_buf, json, buf_size - 1);
-    json_buf[buf_size - 1] = '\\0';
+    json_buf[buf_size - 1] = '\0';
 
     cJSON_free(json);
     cJSON_Delete(root);

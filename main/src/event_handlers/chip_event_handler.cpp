@@ -4,7 +4,7 @@
 #include <portmacro.h>
 #include <esp_matter.h>
 
-#include "../../include/messages/json_outbound_message.h"
+#include "../../include/messages/outbound_message_builder.h"
 
 static const char *TAG = "CHIP_EVENT_HANDLER";
 
@@ -17,7 +17,7 @@ void handle_chip_device_event(const ChipDeviceEvent *event, intptr_t arg) {
         case chip::DeviceLayer::DeviceEventType::kCommissioningComplete:
             ESP_LOGI(TAG, "New Matter device commissioned! Node ID: 0x%llX, Fabric Index: %d",
                      event->CommissioningComplete.nodeId, event->CommissioningComplete.fabricIndex);
-            create_info_matter_commissioning_complete_message(
+            broadcast_info_matter_commissioning_complete_message(
                 event->CommissioningComplete.nodeId,
                 event->CommissioningComplete.fabricIndex);
             return;
@@ -153,7 +153,7 @@ void attribute_data_report_callback(uint64_t remote_node_id, const chip::app::Co
         return;
     }
 
-    create_info_matter_attribute_report_message(
+    broadcast_info_matter_attribute_report_message(
         remote_node_id,
         path.mEndpointId,
         path.mClusterId,
@@ -166,5 +166,5 @@ void subscribe_done_callback(uint64_t remote_node_id, uint32_t subscription_id) 
     ESP_LOGI(TAG, "Subscription done for node 0x%llX with subscription ID: %u",
              remote_node_id, subscription_id);
 
-    create_info_matter_subscribe_done_message(remote_node_id, subscription_id);
+    broadcast_info_matter_subscribe_done_message(remote_node_id, subscription_id);
 }

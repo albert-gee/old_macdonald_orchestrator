@@ -1,5 +1,5 @@
 #include "event_handlers/thread_event_handler.h"
-#include "messages/json_outbound_message.h"
+#include "messages/outbound_message_builder.h"
 #include "thread_util.h"
 
 #include <esp_log.h>
@@ -16,33 +16,33 @@ void handle_thread_event(void *arg, const esp_event_base_t event_base, const int
 
     switch (event_id) {
         case OPENTHREAD_EVENT_START:
-            create_info_thread_stack_status_message(true);
+            broadcast_info_thread_stack_status_message(true);
             break;
 
         case OPENTHREAD_EVENT_STOP:
-            create_info_thread_stack_status_message(false);
+            broadcast_info_thread_stack_status_message(false);
             break;
 
         case OPENTHREAD_EVENT_IF_UP:
-            create_info_thread_interface_status_message(true);
+            broadcast_info_thread_interface_status_message(true);
             break;
 
         case OPENTHREAD_EVENT_IF_DOWN:
-            create_info_thread_interface_status_message(false);
+            broadcast_info_thread_interface_status_message(false);
             break;
 
         case OPENTHREAD_EVENT_ATTACHED:
-            create_info_thread_attachment_status_message(true);
+            broadcast_info_thread_attachment_status_message(true);
             break;
 
         case OPENTHREAD_EVENT_DETACHED:
-            create_info_thread_attachment_status_message(false);
+            broadcast_info_thread_attachment_status_message(false);
             break;
 
                 case OPENTHREAD_EVENT_ROLE_CHANGED: {
             const char *role_str = nullptr;
             if (thread_get_device_role_string(&role_str) == ESP_OK && role_str != nullptr) {
-                create_info_thread_role_message(role_str);
+                broadcast_info_thread_role_message(role_str);
             } else {
                 ESP_LOGW(TAG, "Failed to get Thread role string");
             }
@@ -55,7 +55,7 @@ void handle_thread_event(void *arg, const esp_event_base_t event_base, const int
             size_t count = 0;
 
             if (thread_get_unicast_addresses(addresses, THREAD_ADDRESS_LIST_MAX, &count) == ESP_OK) {
-                create_info_unicast_addresses_message(const_cast<const char **>(addresses), count);
+                broadcast_info_unicast_addresses_message(const_cast<const char **>(addresses), count);
                 thread_free_address_list(addresses, count);
             } else {
                 ESP_LOGW(TAG, "Failed to get unicast addresses");
@@ -69,7 +69,7 @@ void handle_thread_event(void *arg, const esp_event_base_t event_base, const int
             size_t count = 0;
 
             if (thread_get_multicast_addresses(addresses, THREAD_ADDRESS_LIST_MAX, &count) == ESP_OK) {
-                create_info_multicast_addresses_message(const_cast<const char **>(addresses), count);
+                broadcast_info_multicast_addresses_message(const_cast<const char **>(addresses), count);
                 thread_free_address_list(addresses, count);
             } else {
                 ESP_LOGW(TAG, "Failed to get multicast addresses");
@@ -78,17 +78,17 @@ void handle_thread_event(void *arg, const esp_event_base_t event_base, const int
         }
 
         case OPENTHREAD_EVENT_PUBLISH_MESHCOP_E:
-            create_info_meshcop_service_status_message(true);
+            broadcast_info_meshcop_service_status_message(true);
             break;
 
         case OPENTHREAD_EVENT_REMOVE_MESHCOP_E:
-            create_info_meshcop_service_status_message(false);
+            broadcast_info_meshcop_service_status_message(false);
             break;
 
         case OPENTHREAD_EVENT_DATASET_CHANGED: {
             otOperationalDataset dataset;
             if (thread_get_active_dataset(&dataset) == ESP_OK) {
-                create_info_active_dataset_message(
+                broadcast_info_active_dataset_message(
                     dataset.mActiveTimestamp.mSeconds,
                     (const char *)dataset.mNetworkName.m8,
                     dataset.mExtendedPanId.m8,

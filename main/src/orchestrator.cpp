@@ -8,9 +8,6 @@
 #include <nvs_flash.h>
 #include <esp_netif.h>
 
-#include "websocket_server.h"
-#include "messages/json_inbound_message.h"
-
 static const char *TAG = "ORCHESTRATOR";
 
 extern "C" void app_main() {
@@ -66,36 +63,9 @@ extern "C" void app_main() {
     }
 
     // Start Wi-Fi
-    // This stape should go after the Matter stack initialization because Matter disables Wi-Fi AP mode
+    // This step should go after the Matter stack initialization because Matter disables Wi-Fi AP mode
     err = wifi_interface_start();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start Wi-Fi AP+STA: %s", esp_err_to_name(err));
     }
-
-    // Start WebSocket server
-    err = websocket_server_start(handle_json_inbound_message);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to start WebSocket server: %s", esp_err_to_name(err));
-    }
-
-// #include "messages/json_inbound_message.h"
-// #include "websocket_server.h"
-    // err = websocket_server_stop();
-    // if (err != ESP_OK) {
-    //     ESP_LOGE(TAG, "Failed to stop WebSocket server: %s", esp_err_to_name(err));
-    // } else {
-    //     ESP_LOGI(TAG, "WebSocket server stopped");
-    // }
-
-// #include <esp_openthread_border_router.h>
-// #include "thread_util.h"
-// #if CONFIG_OPENTHREAD_BORDER_ROUTER
-//     ESP_LOGI(TAG, "Starting OpenThread Border Router");
-//     err = thread_br_init();
-//     if (err != ESP_OK) {
-//         ESP_LOGE(TAG, "Failed to initialize OpenThread BR: %s", esp_err_to_name(err));
-//     } else {
-//         ESP_LOGI(TAG, "OpenThread Border Router initialized");
-//     }
-// #endif
 }

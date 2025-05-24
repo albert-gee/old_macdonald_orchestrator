@@ -1,4 +1,4 @@
-#include "messages/json_inbound_message.h"
+#include "messages/inbound_message_handler.h"
 #include "commands/matter_commands.h"
 #include "commands/wifi_commands.h"
 #include "commands/thread_commands.h"
@@ -11,15 +11,40 @@
 
 static const char *TAG = "JSON_INBOUND_HANDLER";
 
+/**
+ * Parses a string representing an unsigned 64-bit integer and stores the result.
+ *
+ * @param s The input string to parse. Must represent a valid unsigned 64-bit integer.
+ * @param out A pointer to a variable where the parsed value will be stored upon success.
+ *
+ * @return true if the string was successfully parsed as an unsigned 64-bit integer, false otherwise.
+ *         Failure scenarios include null or empty input string, invalid characters in the input, or
+ *         parsing errors.
+ */
 static bool parse_uint64(const char *s, uint64_t *out) {
     if (!s || !*s) return false;
     char *end;
-    const uint64_t val = strtoull(s, &end, 0);
+    const uint64_t val = strtoull(s, &end, 10);
     if (end == s || *end != '\0') return false;
     *out = val;
     return true;
 }
 
+/**
+ * Parses a null-terminated string into an unsigned 32-bit integer.
+ *
+ * Converts the input string `s` into a `uint32_t` value if it represents a valid
+ * non-negative integer within the range [0, UINT32_MAX]. The result is stored in
+ * the location pointed to by `out` if parsing succeeds.
+ *
+ * @param[in] s A pointer to a null-terminated string containing the input to parse.
+ *              Must not be null, and must contain at least one character.
+ * @param[out] out A pointer to a `uint32_t` variable where the parsed value will be stored
+ *                 if the function succeeds. Must not be null.
+ *
+ * @retval true If the parsing is successful, and `*out` contains the parsed value.
+ * @retval false If parsing fails due to an invalid input, overflow, or other errors.
+ */
 static bool parse_uint32(const char *s, uint32_t *out) {
     if (!s || !*s) return false;
     char *end;
@@ -29,6 +54,22 @@ static bool parse_uint32(const char *s, uint32_t *out) {
     return true;
 }
 
+/**
+ * Parses a string into an unsigned 16-bit integer.
+ *
+ * This function attempts to convert the input string to an unsigned 16-bit
+ * integer. The conversion succeeds only if the entire string represents a
+ * valid number within the range of a uint16_t.
+ *
+ * @param s Pointer to a null-terminated string containing the input number.
+ *          Should not be null, and must represent a valid numeric value.
+ * @param out Pointer to a uint16_t variable where the parsed result is stored
+ *            upon successful conversion. Must not be null.
+ *
+ * @return True if the string is successfully converted to a uint16_t and false
+ *         otherwise. Returns false if the input string is null, empty, contains
+ *         non-numeric characters, or represents a number outside the uint16_t range.
+ */
 static bool parse_uint16(const char *s, uint16_t *out) {
     if (!s || !*s) return false;
     char *end;
@@ -38,10 +79,33 @@ static bool parse_uint16(const char *s, uint16_t *out) {
     return true;
 }
 
+/**
+ * Processes a command message by executing the appropriate action based on the specified command and payload.
+ * This function handles various commands related to Thread, Wi-Fi, and Matter functionalities.
+ *
+ * @param action The command action to be processed. The action specifies the type of operation to execute.
+ *               Supported actions are specific to Thread, Wi-Fi, and Matter components (e.g., "thread.enable",
+ *               "wifi.sta_connect", "matter.controller_init").
+ * @param payload The payload containing the parameters required to execute the specified action. This is expected
+ *                to be a cJSON object with key-value pairs relevant to the command action.
+ *
+ * @return `ESP_OK` if the command was successfully processed and the corresponding operation was executed,
+ *         or an error code defining the failure reason. Potential error cases include invalid arguments,
+ *         unsupported actions, or internal execution failures.
+ */
 static esp_err_t process_command_message(const char *action, const cJSON *payload) {
     ESP_LOGI(TAG, "Processing command action: %s", action);
 
     // Thread commands defined in thread_command.h
+#if CONFIG_OPENTHREAD_ENABLED
+    // thread.enable
+    if (strcmp(action, "thread.enable") == 0) {
+        return execute_thread_enable_command();
+    }
+    // thread.disable
+    if (strcmp(action, "thread.disable") == 0) {
+        return execute_thread_disable_command();
+    }
     // thread.dataset_init
     if (strcmp(action, "thread.dataset.init") == 0) {
         return execute_thread_dataset_init_command(
@@ -54,19 +118,76 @@ static esp_err_t process_command_message(const char *action, const cJSON *payloa
             cJSON_GetObjectItem(payload, "pskc")->valuestring
         );
     }
-    // thread.enable
-    if (strcmp(action, "thread.enable") == 0) {
-        return execute_thread_enable_command();
+    // thread.status_get
+    if (strcmp(action, "thread.status_get") == 0) {
+        bool is_running;
+        esp_err_t ret = execute_thread_status_get_command(&is_running);
+        if (ret == ESP_OK) {
+            ESP_LOGI(TAG, "Thread status - Running: %s", is_running ? "true" : "false");
+        }
+        return ret;
     }
-    // thread.disable
-    if (strcmp(action, "thread.disable") == 0) {
-        return execute_thread_disable_command();
+    // thread.attached_get
+    if (strcmp(action, "thread.attached_get") == 0) {
+        bool is_attached;
+        esp_err_t ret = execute_thread_attached_get_command(&is_attached);
+        if (ret == ESP_OK) {
+            ESP_LOGI(TAG, "Thread attached state: %s", is_attached ? "attached" : "not attached");
+        }
+        return ret;
     }
-
-
-
+    // thread.role_get
+    if (strcmp(action, "thread.role_get") == 0) {
+        const char *role_str;
+        esp_err_t ret = execute_thread_role_get_command(&role_str);
+        if (ret == ESP_OK) {
+            ESP_LOGI(TAG, "Thread role: %s", role_str);
+        }
+        return ret;
+    }
+    // thread.active_dataset_get
+    if (strcmp(action, "thread.active_dataset_get") == 0) {
+        char json_buf[512]; // Example buffer size
+        esp_err_t ret = execute_thread_active_dataset_get_command(json_buf, sizeof(json_buf));
+        if (ret == ESP_OK) {
+            ESP_LOGI(TAG, "Active Dataset: %s", json_buf);
+        }
+        return ret;
+    }
+    // thread.unicast_addresses_get
+    if (strcmp(action, "thread.unicast_addresses_get") == 0) {
+        char *addresses[10];
+        size_t count;
+        esp_err_t ret = execute_thread_unicast_addresses_get_command(addresses, 10, &count);
+        if (ret == ESP_OK) {
+            ESP_LOGI(TAG, "Unicast addresses count: %zu", count);
+        }
+        return ret;
+    }
+    // thread.multicast_addresses_get
+    if (strcmp(action, "thread.multicast_addresses_get") == 0) {
+        char *addresses[10];
+        size_t count;
+        esp_err_t ret = execute_thread_multicast_addresses_get_command(addresses, 10, &count);
+        if (ret == ESP_OK) {
+            ESP_LOGI(TAG, "Multicast addresses count: %zu", count);
+        }
+        return ret;
+    }
+    // thread.br_init
+#if CONFIG_OPENTHREAD_BORDER_ROUTER
+    if (strcmp(action, "thread.br_init") == 0) {
+        return execute_thread_br_init_command();
+    }
+#endif
+    // thread.br_deinit
+    if (strcmp(action, "thread.br_deinit") == 0) {
+        return execute_thread_br_deinit_command();
+    }
+#endif
 
     // Wi-Fi commands defined in wifi_command.h
+#if CONFIG_ENABLE_WIFI_STATION
     // wifi.sta_connect
     if (strcmp(action, "wifi.sta_connect") == 0) {
         const cJSON *ssid = cJSON_GetObjectItem(payload, "ssid");
@@ -78,6 +199,7 @@ static esp_err_t process_command_message(const char *action, const cJSON *payloa
 
         return execute_wifi_sta_connect_command(ssid->valuestring, password->valuestring);
     }
+#endif
 
     // Matter commands defined in matter_command.h
     // matter.controller_init
@@ -130,11 +252,11 @@ static esp_err_t process_command_message(const char *action, const cJSON *payloa
         }
 
 
-        return execute_invoke_cmd_command(static_cast<uint64_t>(dest->valueint),
-                                              static_cast<uint16_t>(ep->valueint),
-                                              static_cast<uint32_t>(cluster->valueint),
-                                              static_cast<uint32_t>(cmd->valueint),
-                                              data->valuestring);
+        return execute_cmd_invoke_command(static_cast<uint64_t>(dest->valueint),
+                                          static_cast<uint16_t>(ep->valueint),
+                                          static_cast<uint32_t>(cluster->valueint),
+                                          static_cast<uint32_t>(cmd->valueint),
+                                          data->valuestring);
     }
 
     // matter.attribute_read
@@ -148,7 +270,7 @@ static esp_err_t process_command_message(const char *action, const cJSON *payloa
             return ESP_ERR_INVALID_ARG;
         }
 
-        return execute_read_attr_command(
+        return execute_attr_read_command(
             static_cast<uint64_t>(node->valueint),
             static_cast<uint16_t>(ep->valueint),
             static_cast<uint32_t>(cluster->valueint),
@@ -169,7 +291,7 @@ static esp_err_t process_command_message(const char *action, const cJSON *payloa
             return ESP_ERR_INVALID_ARG;
         }
 
-        return execute_subscribe_attr_command(
+        return execute_attr_subscribe_command(
             static_cast<uint64_t>(node->valueint),
             static_cast<uint16_t>(ep->valueint),
             static_cast<uint32_t>(cluster->valueint),
@@ -205,8 +327,7 @@ esp_err_t handle_json_inbound_message(const char *inbound_message) {
     if (!cJSON_IsString(type)) {
         ESP_LOGW(TAG, "Invalid or missing 'type' (expected: 'command')");
         ret = ESP_ERR_INVALID_ARG;
-    }
-    else if (!cJSON_IsString(action)) {
+    } else if (!cJSON_IsString(action)) {
         ESP_LOGW(TAG, "Missing or invalid 'action' field");
         ret = ESP_ERR_INVALID_ARG;
     } else if (!cJSON_IsObject(payload)) {

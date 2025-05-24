@@ -2,3 +2,8 @@
 /managed_components/
 sdkconfig
 sdkconfig.old
+/components/websocket_server/certs/prvtkey.pem
+/components/websocket_server/certs/rootCA.key
+/components/websocket_server/certs/rootCA.pem
+/components/websocket_server/certs/rootCA.srl
+/components/websocket_server/certs/servercert.pem

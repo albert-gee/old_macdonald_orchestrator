@@ -23,18 +23,18 @@ esp_err_t execute_matter_pair_ble_thread_command(const uint64_t node_id, const u
     return pairing_ble_thread(node_id, pin, discriminator, tlvs, dataset_len);
 }
 
-esp_err_t execute_invoke_cmd_command(const uint64_t destination_id, const uint16_t endpoint_id,
+esp_err_t execute_cmd_invoke_command(const uint64_t destination_id, const uint16_t endpoint_id,
                                          const uint32_t cluster_id,
                                          const uint32_t command_id, const char *payload_json) {
     return invoke_cluster_command(destination_id, endpoint_id, cluster_id, command_id, payload_json);
 }
 
-esp_err_t execute_read_attr_command(uint64_t node_id, const uint16_t endpoint_id, const uint32_t cluster_id,
+esp_err_t execute_attr_read_command(uint64_t node_id, const uint16_t endpoint_id, const uint32_t cluster_id,
                                  const uint32_t attribute_id) {
     return send_read_attr_command(node_id, endpoint_id, cluster_id, attribute_id);
 }
 
-esp_err_t execute_subscribe_attr_command(uint64_t node_id, const uint16_t endpoint_id, const uint32_t cluster_id,
+esp_err_t execute_attr_subscribe_command(uint64_t node_id, const uint16_t endpoint_id, const uint32_t cluster_id,
                                       const uint32_t attribute_id, uint16_t min_interval, uint16_t max_interval) {
     return send_subscribe_attr_command(node_id, endpoint_id, cluster_id, attribute_id, min_interval, max_interval, true);
 }
