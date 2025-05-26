@@ -11,41 +11,9 @@
 
 static const char *TAG = "WSS_KEEP_ALIVE";
 
-/**
- * @struct client_fd_action_t
- * Represents an action to be applied to client file descriptors.
- *
- * This structure enables the management and tracking of client states
- * by defining actions to be performed, along with additional
- * metadata, such as the file descriptor and the last interaction time.
- */
+// Represents an action to be applied to client file descriptors.
 struct client_fd_action_t {
-    /**
-     * @enum Type
-     * @brief Enum representing various types of client FD actions.
-     *
-     * This enum defines the types of actions that can be performed
-     * on a client file descriptor, including adding, removing, updating,
-     * marking as active, or stopping a task.
-     *
-     * @var Type::NO_CLIENT
-     * Represents the absence of a client.
-     *
-     * @var Type::CLIENT_FD_ADD
-     * Represents the action of adding a client file descriptor.
-     *
-     * @var Type::CLIENT_FD_REMOVE
-     * Represents the action of removing a client file descriptor.
-     *
-     * @var Type::CLIENT_UPDATE
-     * Represents the action of updating client information.
-     *
-     * @var Type::CLIENT_ACTIVE
-     * Represents the action of marking a client as active.
-     *
-     * @var Type::STOP_TASK
-     * Represents the action of stopping a task.
-     */
+    // Types of client FD actions
     enum Type {
         NO_CLIENT = 0,
         CLIENT_FD_ADD,
@@ -55,173 +23,45 @@ struct client_fd_action_t {
         STOP_TASK
     } type;
 
-    /**
-     * @brief File descriptor representing a client connection.
-     *
-     * This integer variable is used as an identifier for a client's connection
-     * within the WebSocket server's keep-alive mechanism. It indicates a specific
-     * client session and is used in actions such as adding, removing, or
-     * updating client records.
-     *
-     * A value of -1 typically signifies an uninitialized or invalid file descriptor.
-     * The `fd` is associated with the `client_fd_action_t` structure to track
-     * client activity and statuses.
-     */
+    // File descriptor representing a client connection
     int fd;
-    /**
-     * Tracks the last time a client was marked as active.
-     *
-     * This variable records the timestamp in milliseconds of the last observed activity from a client.
-     * It is used to monitor client activity and determine their "alive" status in the keep-alive mechanism.
-     *
-     * The timestamp is updated each time the client's status is refreshed or when they perform an action
-     * that signifies activity. It serves as a critical parameter in calculating the next expected check
-     * for the client and enabling logic to remove inactive clients after a specified timeout period.
-     */
+
+    //Tracks the last time a client was marked as active.
     uint64_t last_seen;
 };
 
-/**
- * @struct wss_keep_alive_storage
- * @brief Stores data and configurations for the WebSocket Server (WSS) keep-alive mechanism.
- *
- * This structure is used to manage the keep-alive state for multiple WebSocket clients.
- * It includes configurations like the maximum number of clients, keep-alive intervals,
- * and callback functions to handle client status updates.
- *
- * @var max_clients
- * Maximum number of WebSocket clients supported by the keep-alive mechanism.
- *
- * @var check_client_alive_cb
- * Callback function to check if a specific WebSocket client is still alive.
- *
- * @var client_not_alive_cb
- * Callback function to handle actions when a client is determined to be not alive.
- *
- * @var keep_alive_period_ms
- * Time interval, in milliseconds, between successive keep-alive checks for each client.
- *
- * @var not_alive_after_ms
- * Time duration, in milliseconds, after which a client is marked as not alive if no response is received.
- *
- * @var user_ctx
- * User-defined context data, which can be used by the application.
- *
- * @var q
- * Queue handle used for inter-task actions and communication.
- *
- * @var clients
- * Dynamic array of type `client_fd_action_t`, which holds information about each client's state
- * and file descriptors. The size of the array is determined by `max_clients` and the queue size.
- */
+// Stores data and configurations for the WebSocket Server (WSS) keep-alive mechanism.
 struct wss_keep_alive_storage {
-    /**
-     * Maximum number of clients that can be managed within the WebSocket
-     * keep-alive storage system.
-     *
-     * Represents the upper limit of the number of client FD actions
-     * that the system can handle concurrently.
-     */
+    // Maximum number of clients that can be managed within the WebSocket keep-alive storage system.
     size_t max_clients;
-    /**
-     * Callback used to check if a specific WebSocket client is alive.
-     *
-     * The callback should determine if the given client, identified by its
-     * file descriptor, is alive or responsive. It is invoked periodically
-     * during the keep-alive task to ensure client connections are maintained.
-     *
-     * @param h A handle to the WebSocket keep-alive storage structure.
-     * @param fd The file descriptor of the client to be checked.
-     * @return True if the client is alive, false otherwise.
-     */
+
+    // Callback used to check if a specific WebSocket client is alive.
     wss_check_client_alive_cb_t check_client_alive_cb;
-    /**
-     * A callback function of the type `wss_client_not_alive_cb_t` that is invoked when a client is determined to be
-     * not alive.
-     *
-     * This callback is triggered by the keep-alive mechanism in scenarios where a client fails to respond
-     * within the defined `not_alive_after_ms` interval. The function is responsible for handling the
-     * disconnection or cleanup logic for the specified client.
-     *
-     * @note The function passed to this callback should accept two parameters:
-     *       - A handle to the `wss_keep_alive_t` structure representing the keep-alive context.
-     *       - An integer representing the file descriptor (fd) of the client determined to be not alive.
-     *
-     * @warning Ensure that the callback implementation does not block or introduce significant
-     *          delays, as it operates within the keep-alive task context.
-     */
+
+    // A callback of the type `wss_client_not_alive_cb_t` that is invoked when a client is determined to be not alive.
     wss_client_not_alive_cb_t client_not_alive_cb;
-    /**
-     * @brief Specifies the interval in milliseconds for the periodic keep-alive checks.
-     *
-     * This variable determines the duration between consecutive checks to ensure that
-     * connected clients are still active. It is used to calculate the next scheduled
-     * keep-alive operation for active clients. Reducing this value increases the frequency
-     * of checks, which may lead to faster detection of inactive clients but could also
-     * result in higher processing overhead.
-     *
-     * The actual interval dynamically influences mechanisms such as calculating
-     * the next keep-alive check and scheduling tasks accordingly.
-     */
+
+    // The interval in milliseconds for the periodic keep-alive checks.
     size_t keep_alive_period_ms;
-    /**
-     * @brief Specifies the duration, in milliseconds, after which a client is considered not alive.
-     *
-     * This variable defines the timeout period for determining the liveness of a client. If the time
-     * elapsed since the client's last activity (e.g., last seen) exceeds this value, the client is
-     * treated as not alive.
-     *
-     * It is used within the keep-alive mechanism to periodically check the activity of connected
-     * clients and trigger appropriate actions (e.g., marking the client as inactive or executing a
-     * callback) when the client is deemed not alive.
-     */
+
+    // The duration, in milliseconds, after which a client is considered not alive.
     size_t not_alive_after_ms;
-    /**
-     * @brief A user-defined context pointer.
-     *
-     * This variable allows the user to attach custom data or context to the
-     * keep-alive system for use during runtime or callbacks.
-     *
-     * The `user_ctx` can be utilized to store application-specific
-     * context or configuration that needs to be passed to the callbacks
-     * or accessed from within the keep-alive system's tasks.
-     *
-     * Ownership and lifecycle management of the data pointed to by `user_ctx`
-     * are the responsibility of the user. The system does not modify, free, or
-     * validate the contents of this pointer.
-     */
+
+    // A user-defined context pointer.
     void *user_ctx;
-    /**
-     * @brief Queue handle used for communication between the keep-alive task and other parts of the system.
-     *
-     * This queue is utilized to send and receive `client_fd_action_t` instances,
-     * which represent actions related to client file descriptors, such as adding,
-     * removing, updating clients, or stopping the task.
-     *
-     * It is created during initialization of the keep-alive service and deleted
-     * when the service is stopped.
-     */
+
+    // Queue handle used for communication between the keep-alive task and other parts of the system.
     QueueHandle_t q;
-    /**
-     * @brief Array representing the actions for each client connected to the system.
-     *
-     * The `clients` array is part of the WebSocket server's keep-alive mechanism. Each entry
-     * in the array corresponds to a specific client and holds information about the client's
-     * current status, including its file descriptor, last seen timestamp, and the action to
-     * be performed on the client.
-     *
-     * This array is utilized to track the active clients and manage their connections, ensuring
-     * that clients are removed or updated based on their activity or lack thereof. The `type` field
-     * in each element determines the specific action for a client.
-     *
-     * @note The size of the array depends on the `max_clients` field in the related
-     *       `wss_keep_alive_storage` structure.
-     *
-     * @see client_fd_action_t
-     * @see wss_keep_alive_storage
-     */
+
+    // Array representing the actions for each client connected to the system.
     client_fd_action_t clients[];
 };
+
+// Default timeout duration (in milliseconds) for the keep-alive mechanism.
+static constexpr int64_t DEFAULT_KEEP_ALIVE_TIMEOUT_MS = 30000;
+
+// Minimum interval in milliseconds for performing keep-alive checks.
+static constexpr int64_t MIN_KEEP_ALIVE_CHECK_MS = 1000;
 
 /**
  * @brief Retrieves the current time in milliseconds.
@@ -234,29 +74,6 @@ struct wss_keep_alive_storage {
 static int64_t get_current_time_ms() {
     return esp_timer_get_time() / 1000;
 }
-
-/**
- * @brief Default timeout duration (in milliseconds) for the keep-alive mechanism.
- *
- * This constant defines the default timeout value used in the keep-alive logic
- * to determine when the next check for client activity should be conducted.
- * It ensures that inactive clients are evaluated for disconnection or other action
- * within the specified time period.
- *
- * Use this value for initializing or managing client timeouts unless overridden
- * by specific settings in the application.
- */
-static constexpr int64_t DEFAULT_KEEP_ALIVE_TIMEOUT_MS = 30000;
-/**
- * Minimum interval in milliseconds for performing keep-alive checks.
- *
- * This constant defines the lower bound of time that must elapse between
- * successive keep-alive checks for active clients. It ensures that the
- * checks are not triggered too frequently, thereby preventing unnecessary
- * resource usage. This value also helps in maintaining a balance between
- * responsiveness and system efficiency during keep-alive operations.
- */
-static constexpr int64_t MIN_KEEP_ALIVE_CHECK_MS = 1000;
 
 /**
  * @brief Calculates the time until the next keep-alive check for active clients.
@@ -345,10 +162,6 @@ static bool register_client(wss_keep_alive_storage *h, const int client_fd) {
  * that matches the given `client_fd`. If a match is found, the client's type
  * is set to `NO_CLIENT`, marking it as unregistered, and its file descriptor
  * is reset to -1.
- *
- * Logs the result of the operation. If the client is successfully removed,
- * an informational log message is printed. If the `client_fd` is invalid
- * or no matching client is found, a warning log message is printed.
  *
  * @param h Pointer to the `wss_keep_alive_storage` instance containing client
  *          information and status.
