@@ -34,30 +34,30 @@ void handle_wifi_event(void *arg, esp_event_base_t event_base, int32_t event_id,
         case WIFI_EVENT_AP_START:
             ESP_LOGI(TAG, "Wi-Fi AP Started");
 
-            break;
-
-        case WIFI_EVENT_AP_STOP:
-            ESP_LOGI(TAG, "Wi-Fi AP Stopped");
-            break;
-
-        case WIFI_EVENT_AP_STACONNECTED:
-            ESP_LOGI(TAG, "Station connected to AP");
-
             // Start WebSocket server
             err = websocket_server_start(send_websocket_connected_message_to_client, handle_json_inbound_message);
             if (err != ESP_OK) {
                 ESP_LOGE(TAG, "Failed to start WebSocket server: %s", esp_err_to_name(err));
             }
+
             break;
 
-        case WIFI_EVENT_AP_STADISCONNECTED:
-            ESP_LOGI(TAG, "Station disconnected from AP");
+        case WIFI_EVENT_AP_STOP:
+            ESP_LOGI(TAG, "Wi-Fi AP Stopped");
 
             // Stop WebSocket server
             err = websocket_server_stop();
             if (err != ESP_OK) {
                 ESP_LOGE(TAG, "Failed to stop WebSocket server: %s", esp_err_to_name(err));
             }
+            break;
+
+        case WIFI_EVENT_AP_STACONNECTED:
+            ESP_LOGI(TAG, "Station connected to AP");
+            break;
+
+        case WIFI_EVENT_AP_STADISCONNECTED:
+            ESP_LOGI(TAG, "Station disconnected from AP");
             break;
 
         default:

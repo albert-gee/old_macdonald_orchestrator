@@ -287,8 +287,8 @@ esp_err_t websocket_server_stop() {
     keep_alive = nullptr;
 
     // Stop HTTPS server
-    const esp_err_t ret = httpd_ssl_stop(server);
     server = nullptr;
+    const esp_err_t ret = httpd_ssl_stop(server);
 
     return ret;
 }
@@ -303,7 +303,11 @@ esp_err_t websocket_send_message_to_client(const int fd, const char *message) {
 
     arg->httpd_handle = server;
     arg->client_fd = fd;
-    arg->message = strdup(message);  // Copy message to be sent asynchronously
+    arg->message = strdup(message);
+    if (!arg->message) {
+        free(arg);
+        return ESP_ERR_NO_MEM;
+    }
 
     // Queue task for asynchronous WebSocket transmission
     return httpd_queue_work(server, async_send_task, arg);
