@@ -89,7 +89,7 @@ static bool parse_uint16(const char *s, uint16_t *out) {
  * @param payload The payload containing the parameters required to execute the specified action. This is expected
  *                to be a cJSON object with key-value pairs relevant to the command action.
  *
- * @return `ESP_OK` if the command was successfully processed and the corresponding operation was executed,
+ * @return `ESP_OK` if the command was successfully processed, and the corresponding operation was executed,
  *         or an error code defining the failure reason. Potential error cases include invalid arguments,
  *         unsupported actions, or internal execution failures.
  */
