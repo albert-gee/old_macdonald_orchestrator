@@ -1,7 +1,6 @@
 #include "wifi_interface.h"
 #include "wifi_nvs_util.h"
 #include "sdkconfig.h"
-
 #include <esp_check.h>
 #include <esp_random.h>
 #include <esp_wifi.h>
@@ -9,218 +8,169 @@
 
 static const char *TAG = "WIFI_INTERFACE";
 
-static esp_netif_t *wifi_ap_netif = nullptr;  /**< Pointer to the AP netif instance */
-static esp_netif_t *wifi_sta_netif = nullptr; /**< Pointer to the STA netif instance */
+// Pointer to the Wi-Fi Access Point network interface.
+static esp_netif_t *wifi_ap_netif = nullptr;
+
+// Pointer to the Wi-Fi Station network interface.
+static esp_netif_t *wifi_sta_netif = nullptr;
+
+// Max length for a Wi-Fi SSID, including the null terminator.
+static constexpr size_t WIFI_SSID_MAX_LEN = 32;
+
+// Max length for a Wi-Fi password, including the null terminator.
+static constexpr size_t WIFI_PASS_MAX_LEN = 64;
 
 /**
- * @brief Configure Wi-Fi STA mode with given credentials.
+ * @brief Copies a string into a destination buffer with null termination.
  *
- * Constructs a wifi_config_t structure, copies and null-terminates the
- * SSID and password, enforces WPA2/WPA3-PSK authentication, and commits
- * the configuration to the Wi-Fi driver.
- *
- * @param ssid      Null-terminated SSID string.
- * @param password  Null-terminated password string.
- * @return ESP_OK on success, or an esp_err_t error code.
+ * @param dest A pointer to the destination buffer where the data will be copied.
+ * @param src A pointer to the source string to be copied into the destination buffer.
+ * @param max_len The maximum size of the destination buffer, including space for null termination.
  */
-static esp_err_t set_wifi_sta_config(const char *ssid, const char *password) {
-    ESP_LOGI(TAG, "Setting Wi‑Fi STA configuration");
-
-    // Prepare an empty configuration structure
-    wifi_config_t wifi_sta_config = {};
-
-    // Copy SSID and ensure null-termination
-    strncpy(reinterpret_cast<char *>(wifi_sta_config.sta.ssid),
-            ssid,
-            sizeof(wifi_sta_config.sta.ssid) - 1);
-    wifi_sta_config.sta.ssid[sizeof(wifi_sta_config.sta.ssid) - 1] = '\0';
-
-    // Copy password and ensure null-termination
-    strncpy(reinterpret_cast<char *>(wifi_sta_config.sta.password),
-            password,
-            sizeof(wifi_sta_config.sta.password) - 1);
-    wifi_sta_config.sta.password[sizeof(wifi_sta_config.sta.password) - 1] = '\0';
-
-    // Use WPA2/WPA3 PSK for STA authentication
-    wifi_sta_config.sta.threshold.authmode = WIFI_AUTH_WPA2_WPA3_PSK;
-
-    // Commit the configuration to the driver
-    return esp_wifi_set_config(WIFI_IF_STA, &wifi_sta_config);
+static void copy_wifi_field(char *dest, const char *src, const size_t max_len) {
+    strncpy(dest, src, max_len - 1);
+    dest[max_len - 1] = '\0'; // Null termination
 }
 
 /**
- * @brief Load stored STA credentials from NVS and apply STA configuration.
+ * Configures the Wi-Fi station (STA) with the given SSID and password.
  *
- * Retrieves the SSID and password saved in non-volatile storage. If
- * retrieval succeeds, applies the configuration via set_wifi_sta_config().
- *
- * @return ESP_OK if credentials were found and applied, or an error code.
+ * @param ssid The SSID for the Wi-Fi network. Must be a null-terminated string.
+ * @param password The password for the Wi-Fi network. Must be a null-terminated string.
+ * @return
+ *         - ESP_OK: Successfully configured the Wi-Fi station.
+ *         - Other `esp_err_t` codes if the configuration fails.
  */
-static esp_err_t set_wifi_sta_config_from_nvs() {
-    char stored_sta_ssid[32] = {};
-    char stored_sta_password[64] = {};
+static esp_err_t configure_sta(const char *ssid, const char *password) {
+    ESP_LOGI(TAG, "Configuring Wi‑Fi STA");
 
-    // Retrieve saved credentials
-    esp_err_t err = get_wifi_sta_credentials(stored_sta_ssid,
-                                             sizeof(stored_sta_ssid),
-                                             stored_sta_password,
-                                             sizeof(stored_sta_password));
-    if (err == ESP_OK) {
-        // Apply the retrieved configuration
-        err = set_wifi_sta_config(stored_sta_ssid, stored_sta_password);
+    wifi_config_t config = {};
+    copy_wifi_field(reinterpret_cast<char *>(config.sta.ssid), ssid, sizeof(config.sta.ssid));
+    copy_wifi_field(reinterpret_cast<char *>(config.sta.password), password, sizeof(config.sta.password));
+    config.sta.threshold.authmode = WIFI_AUTH_WPA2_WPA3_PSK;
+
+    return esp_wifi_set_config(WIFI_IF_STA, &config);
+}
+
+/**
+ * @brief Loads and configures Wi-Fi station (STA) credentials from Non-Volatile Storage (NVS).
+ *
+ * This function attempts to retrieve the stored Wi-Fi SSID and password for Station mode
+ * from NVS. If the credentials are successfully retrieved, it uses them to
+ * configure the Wi-Fi STA mode. If the credentials are not found in NVS,
+ * it returns an error.
+ *
+ * @return
+ *  - ESP_OK: Successfully configured Wi-Fi STA with credentials from NVS.
+ *  - ESP_ERR_NOT_FOUND: Wi-Fi credentials were not found in NVS.
+ */
+static esp_err_t load_sta_config_from_nvs() {
+    char ssid[WIFI_SSID_MAX_LEN] = {};
+    char password[WIFI_PASS_MAX_LEN] = {};
+    if (get_wifi_sta_credentials(ssid, sizeof(ssid), password, sizeof(password)) != ESP_OK) {
+        return ESP_ERR_NOT_FOUND;
     }
-    return err;
+    return configure_sta(ssid, password);
 }
 
 /**
- * @brief Configure Wi-Fi AP mode with given credentials.
+ * @brief Configures the device to operate as a Wi-Fi access point (AP).
  *
- * Sets connection parameters, chooses the appropriate authentication mode,
- * and commits the configuration.
+ * This function sets up the Wi-Fi access point (AP) mode with the specified
+ * SSID and password. It also configures additional AP parameters such as
+ * authentication mode and maximum number of simultaneous connections.
  *
- * @param ap_ssid      Null-terminated AP SSID string.
- * @param ap_password  Null-terminated AP password string.
- * @return ESP_OK on success, or an esp_err_t error code.
+ * @param ssid The SSID of the Wi-Fi AP. Limited to 32 characters.
+ * @param password The password of the Wi-Fi AP. Limited to 64 characters.
+ *
+ * @return
+ * - ESP_OK on successful configuration.
+ * - Appropriate error code otherwise.
  */
-static esp_err_t set_wifi_ap_config(const char *ap_ssid, const char *ap_password) {
-    ESP_LOGI(TAG, "Setting Wi‑Fi AP configuration");
+static esp_err_t configure_ap(const char *ssid, const char *password) {
+    ESP_LOGI(TAG, "Configuring Wi‑Fi AP");
 
-    wifi_config_t wifi_ap_config = {};
+    wifi_config_t config = {};
+    copy_wifi_field(reinterpret_cast<char *>(config.ap.ssid), ssid, sizeof(config.ap.ssid));
+    copy_wifi_field(reinterpret_cast<char *>(config.ap.password), password, sizeof(config.ap.password));
+    config.ap.ssid_len = strlen(reinterpret_cast<char *>(config.ap.ssid));
+    config.ap.max_connection = 4;
+    config.ap.authmode = WIFI_AUTH_WPA2_WPA3_PSK;
 
-    // Copy AP SSID and ensure null-termination
-    strncpy(reinterpret_cast<char *>(wifi_ap_config.ap.ssid),
-            ap_ssid,
-            sizeof(wifi_ap_config.ap.ssid) - 1);
-    wifi_ap_config.ap.ssid[sizeof(wifi_ap_config.ap.ssid) - 1] = '\0';
-
-    // Copy AP password and ensure null-termination
-    strncpy(reinterpret_cast<char *>(wifi_ap_config.ap.password),
-            ap_password,
-            sizeof(wifi_ap_config.ap.password) - 1);
-    wifi_ap_config.ap.password[sizeof(wifi_ap_config.ap.password) - 1] = '\0';
-
-    // Set SSID length explicitly
-    wifi_ap_config.ap.ssid_len = strlen(reinterpret_cast<const char *>(wifi_ap_config.ap.ssid));
-
-    // Allow up to 4 simultaneous clients
-    wifi_ap_config.ap.max_connection = 4;
-
-    // Choose authentication mode based on password length
-    size_t pass_len = strlen(ap_password);
-    wifi_ap_config.ap.authmode = (pass_len >= 8)
-                                     ? WIFI_AUTH_WPA2_WPA3_PSK
-                                     : WIFI_AUTH_OPEN;
-
-    // Commit the configuration to the driver
-    return esp_wifi_set_config(WIFI_IF_AP, &wifi_ap_config);
+    return esp_wifi_set_config(WIFI_IF_AP, &config);
 }
 
 /**
- * @brief Load stored AP credentials from NVS or use defaults, then apply configuration.
+ * @brief Loads Wi-Fi access point (AP) configuration from Non-Volatile Storage (NVS).
  *
- * Attempts to fetch saved AP SSID and password. On success, applies them;
- * otherwise falls back to default values defined in sdkconfig.
+ * Attempts to retrieve the AP SSID and password from NVS. If the retrieval is successful,
+ * the AP is configured with the loaded credentials. If the retrieval fails, the AP is
+ * configured with the default credentials defined in the sdkconfig.
  *
- * @return ESP_OK on success, or an esp_err_t error code.
+ * @return
+ *      - ESP_OK: The AP configuration was successfully set.
+ *      - Error code: An error occurred while configuring the AP.
  */
-static esp_err_t set_wifi_ap_config_from_nvs() {
-    char stored_ap_ssid[32] = {};
-    char stored_ap_password[64] = {};
+static esp_err_t load_ap_config_from_nvs() {
+    char ssid[WIFI_SSID_MAX_LEN] = {};
+    char password[WIFI_PASS_MAX_LEN] = {};
 
-    esp_err_t err = get_wifi_ap_credentials(stored_ap_ssid,
-                                            sizeof(stored_ap_ssid),
-                                            stored_ap_password,
-                                            sizeof(stored_ap_password));
-    if (err == ESP_OK) {
-        ESP_LOGI(TAG, "Using stored AP credentials");
-        err = set_wifi_ap_config(stored_ap_ssid, stored_ap_password);
-    } else {
-        ESP_LOGI(TAG, "Using default AP credentials");
-        err = set_wifi_ap_config(CONFIG_WIFI_AP_SSID_DEFAULT,
-                                  CONFIG_WIFI_AP_PASS_DEFAULT);
+    if (get_wifi_ap_credentials(ssid, sizeof(ssid), password, sizeof(password)) == ESP_OK) {
+        ESP_LOGI(TAG, "Loaded AP config from NVS");
+        return configure_ap(ssid, password);
     }
-    return err;
+    ESP_LOGI(TAG, "Using default AP config from sdkconfig");
+    return configure_ap(CONFIG_WIFI_AP_SSID_DEFAULT, CONFIG_WIFI_AP_PASS_DEFAULT);
 }
 
 esp_err_t wifi_interface_init(const esp_event_handler_t event_handler) {
-    ESP_LOGI(TAG, "Initializing Wi‑Fi interface");
+    ESP_LOGI(TAG, "Initializing Wi‑Fi Interface");
 
-    // Register provided handler for all Wi-Fi events
-    esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, event_handler, nullptr);
+    ESP_RETURN_ON_ERROR(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, event_handler, nullptr),
+                        TAG, "Failed to register event handler");
 
-    // Lazily create AP netif if not already created
     if (!wifi_ap_netif) {
-        ESP_LOGI(TAG, "Creating netif for Wi‑Fi AP");
         wifi_ap_netif = esp_netif_create_default_wifi_ap();
-        if (!wifi_ap_netif) {
-            ESP_LOGE(TAG, "Failed to create Wi‑Fi AP netif");
-            return ESP_FAIL;
-        }
+        ESP_RETURN_ON_FALSE(wifi_ap_netif, ESP_FAIL, TAG, "Failed to create AP netif");
     }
 
-    // Lazily create STA netif if not already created
     if (!wifi_sta_netif) {
-        ESP_LOGI(TAG, "Creating netif for Wi‑Fi STA");
         wifi_sta_netif = esp_netif_create_default_wifi_sta();
-        if (!wifi_sta_netif) {
-            ESP_LOGE(TAG, "Failed to create Wi‑Fi STA netif");
-            return ESP_FAIL;
-        }
+        ESP_RETURN_ON_FALSE(wifi_sta_netif, ESP_FAIL, TAG, "Failed to create STA netif");
     }
 
-    // Initialize the Wi-Fi driver with the default configuration
     const wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     return esp_wifi_init(&cfg);
 }
 
 esp_err_t wifi_interface_start() {
-    ESP_LOGI(TAG, "Starting Wi-Fi");
+    ESP_LOGI(TAG, "Starting Wi‑Fi");
 
-    // Stop Wi‑Fi if already running to apply new settings
     ESP_RETURN_ON_ERROR(esp_wifi_stop(), TAG, "Failed to stop Wi‑Fi");
+    ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_APSTA), TAG, "Failed to set mode");
 
-    // Set the Wi-Fi operating mode
-    ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_APSTA), TAG, "Mode set failed");
-
-    // Attempt to load STA credentials; default to AP-only if unavailable
-    esp_err_t err = set_wifi_sta_config_from_nvs();
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "No stored STA credentials.");
+    if (load_sta_config_from_nvs() == ESP_OK) {
+        ESP_LOGI(TAG, "STA credentials loaded from NVS");
     } else {
-        ESP_LOGI(TAG, "Using stored STA credentials.");
+        ESP_LOGW(TAG, "No valid STA credentials found");
     }
 
-    // Load AP credentials or defaults
-    ESP_RETURN_ON_ERROR(set_wifi_ap_config_from_nvs(), TAG, "Failed to set AP config");
-
-
-    // Start the Wi-Fi driver and bring interfaces up
-    ESP_LOGI(TAG, "Starting Wi‑Fi driver");
-    return esp_wifi_start();
+    return load_ap_config_from_nvs();
 }
 
 esp_err_t wifi_sta_connect(const char *ssid, const char *password) {
-    // Persist new credentials
-    ESP_RETURN_ON_ERROR(save_wifi_sta_credentials(ssid, password),
-                        TAG, "Save STA creds failed");
+    ESP_RETURN_ON_ERROR(save_wifi_sta_credentials(ssid, password), TAG, "Failed to save STA credentials");
 
-    // Disconnect any existing connection
-    ESP_RETURN_ON_ERROR(esp_wifi_disconnect(), TAG, "Disconnect failed");
+    ESP_LOGI(TAG, "Reconnecting with new STA credentials");
+    if (esp_wifi_disconnect() != ESP_OK) {
+        ESP_LOGW(TAG, "No existing STA connection to disconnect");
+    }
 
-    // Apply the new STA configuration
-    ESP_RETURN_ON_ERROR(set_wifi_sta_config(ssid, password),
-                        TAG, "Set STA config failed");
-
-    // Initiate connection attempt
-    ESP_RETURN_ON_ERROR(esp_wifi_connect(), TAG, "Connect failed");
-
-    return ESP_OK;
+    ESP_RETURN_ON_ERROR(configure_sta(ssid, password), TAG, "Failed to set STA config");
+    return esp_wifi_connect();
 }
 
 esp_err_t wifi_ap_set_credentials(const char *ap_ssid, const char *ap_password) {
-    // Persist new AP credentials
-    ESP_RETURN_ON_ERROR(save_wifi_ap_credentials(ap_ssid, ap_password),
-                        TAG, "Save AP creds failed");
-    // Restart interface to apply updated AP settings
+    ESP_RETURN_ON_ERROR(save_wifi_ap_credentials(ap_ssid, ap_password), TAG, "Failed to save AP credentials");
     return wifi_interface_start();
 }
