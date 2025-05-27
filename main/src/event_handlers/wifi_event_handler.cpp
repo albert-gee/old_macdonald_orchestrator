@@ -53,11 +53,11 @@ void handle_wifi_event(void *arg, esp_event_base_t event_base, int32_t event_id,
             break;
 
         case WIFI_EVENT_AP_STACONNECTED:
-            ESP_LOGI(TAG, "Station connected to AP");
+            ESP_LOGI(TAG, "Station connected to this AP");
             break;
 
         case WIFI_EVENT_AP_STADISCONNECTED:
-            ESP_LOGI(TAG, "Station disconnected from AP");
+            ESP_LOGI(TAG, "Station disconnected from this AP");
             break;
 
         default:
