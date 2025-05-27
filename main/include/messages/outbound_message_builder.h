@@ -8,23 +8,6 @@
 extern "C" {
 #endif
 
-// ---- WEBSOCKET ----
-
-/**
- * Sends a WebSocket "connected" message to the specified client.
- *
- * This function constructs a JSON message with the type "websocket" and
- * the action "connected", and includes a payload indicating the connection
- * status. The message is then sent to the client identified by the provided
- * file descriptor.
- *
- * @param client_fd The file descriptor of the connected client to which the
- *                  message will be sent.
- * @return ESP_OK if the message is successfully sent, or an appropriate error
- *         code if the operation fails.
- */
-esp_err_t send_websocket_connected_message_to_client(int client_fd);
-
 // ---- THREAD ----
 
 /**

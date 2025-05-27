@@ -14,9 +14,6 @@ constexpr char WEBSOCKET_URI[] = "/ws";
 // Static instance of the HTTP server.
 static httpd_handle_t server = nullptr;
 
-// Static variable used to store the WebSocket connection handler function pointer.
-static ws_connection_handler_t connection_handler = nullptr;
-
 // Static variable to store the WebSocket inbound message handler callback.
 static ws_inbound_message_handler_t message_handler = nullptr;
 
@@ -233,13 +230,11 @@ static esp_err_t websocket_handler(httpd_req_t *req) {
 
     return receive_and_handle_frame(req);
 }
-esp_err_t websocket_server_start(const ws_connection_handler_t connection_handler_fun,
-                                 const ws_inbound_message_handler_t message_handler_fun) {
+esp_err_t websocket_server_start(const ws_inbound_message_handler_t message_handler_fun) {
     // Prevent starting if the server is already running
     if (server) return ESP_FAIL;
 
-    // Set user-provided handlers for connection and message processing
-    connection_handler = connection_handler_fun;
+    // Set user-provided handler for message processing
     message_handler = message_handler_fun;
 
     // Configure keep-alive: handle inactive clients and ping checking

@@ -35,7 +35,7 @@ void handle_wifi_event(void *arg, esp_event_base_t event_base, int32_t event_id,
             ESP_LOGI(TAG, "Wi-Fi AP Started");
 
             // Start WebSocket server
-            err = websocket_server_start(send_websocket_connected_message_to_client, handle_json_inbound_message);
+            err = websocket_server_start(handle_json_inbound_message);
             if (err != ESP_OK) {
                 ESP_LOGE(TAG, "Failed to start WebSocket server: %s", esp_err_to_name(err));
             }

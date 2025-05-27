@@ -95,19 +95,10 @@ static esp_err_t send_message_to_client(const char *type, const char *action, cJ
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to send message: %s", esp_err_to_name(err));
     }
+    ESP_LOGI(TAG, "Sending message: %s", json_str);
 
     free(json_str);
     return err;
-}
-
-// ---- WEBSOCKET
-
-esp_err_t send_websocket_connected_message_to_client(const int client_fd) {
-    cJSON *payload = cJSON_CreateObject();
-    if (!payload) return ESP_FAIL;
-
-    cJSON_AddBoolToObject(payload, "connected", true);
-    return send_message_to_client("websocket", "connected", payload, client_fd);
 }
 
 // ---- THREAD

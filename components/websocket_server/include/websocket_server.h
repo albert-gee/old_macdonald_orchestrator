@@ -7,26 +7,21 @@
 extern "C" {
 #endif
 
-typedef esp_err_t (*ws_connection_handler_t)(int client_fd);
-
 typedef esp_err_t (*ws_inbound_message_handler_t)(const char *json);
 
 /**
  * Starts the WebSocket server and initializes its necessary components.
  *
  * This function sets up the WebSocket server to begin accepting connections,
- * registers a handler for processing inbound messages received on active WebSocket sessions,
- * and optionally sends a message to newly connected clients.
+ * registers a handler for processing inbound messages received on active WebSocket sessions.
  *
- * @param connection_handler_fun A pointer to a function that will be called when a new WebSocket connection is established.
  * @param message_handler_fun A pointer to a function that will be called when a new message is received on an active WebSocket session.
  * @return
  * - ESP_OK on successful initialization and start of the WebSocket server.
  * - ESP_ERR_INVALID_ARG if the handler parameter is invalid.
  * - Other error codes indicating failures during initialization.
  */
-esp_err_t websocket_server_start(ws_connection_handler_t connection_handler_fun,
-                                 ws_inbound_message_handler_t message_handler_fun);
+esp_err_t websocket_server_start(ws_inbound_message_handler_t message_handler_fun);
 
 /**
  * Stops the WebSocket server and cleans up associated resources.

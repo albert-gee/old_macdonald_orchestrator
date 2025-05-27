@@ -247,6 +247,7 @@ static void keep_alive_task(void *arg) {
                     register_client(h, action.fd);
                     break;
                 case client_fd_action_t::CLIENT_FD_REMOVE:
+                    ESP_LOGW(TAG, "Removing client fd:%d", action.fd);
                     unregister_client(h, action.fd);
                     break;
                 case client_fd_action_t::CLIENT_UPDATE:
