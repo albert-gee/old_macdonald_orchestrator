@@ -222,9 +222,6 @@ static esp_err_t websocket_handler(httpd_req_t *req) {
     if (req->method == HTTP_GET) {
         ESP_LOGI("websocket_server", "Client connected: fd=%d", fd);
         wss_keep_alive_add_client(keep_alive, fd);
-        if (connection_handler) {
-            connection_handler(fd);
-        }
         return ESP_OK;
     }
 
