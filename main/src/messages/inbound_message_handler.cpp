@@ -2,12 +2,16 @@
 #include "commands/matter_commands.h"
 #include "commands/wifi_commands.h"
 #include "commands/thread_commands.h"
+#include "messages/outbound_message_builder.h"
 #include "sdkconfig.h"
+#include "thread_util.h"
 
 #include <cJSON.h>
 #include <esp_event.h>
 #include <esp_log.h>
+#include <cerrno>
 #include <cstring>
+#include <cstdlib>
 
 static const char *TAG = "JSON_INBOUND_HANDLER";
 
@@ -23,9 +27,11 @@ static const char *TAG = "JSON_INBOUND_HANDLER";
  */
 static bool parse_uint64(const char *s, uint64_t *out) {
     if (!s || !*s) return false;
+    if (*s < '0' || *s > '9') return false;
     char *end;
+    errno = 0;
     const uint64_t val = strtoull(s, &end, 10);
-    if (end == s || *end != '\0') return false;
+    if (end == s || *end != '\0' || errno == ERANGE) return false;
     *out = val;
     return true;
 }
@@ -47,9 +53,11 @@ static bool parse_uint64(const char *s, uint64_t *out) {
  */
 static bool parse_uint32(const char *s, uint32_t *out) {
     if (!s || !*s) return false;
+    if (*s < '0' || *s > '9') return false;
     char *end;
+    errno = 0;
     const unsigned long val = strtoul(s, &end, 10);
-    if (end == s || *end != '\0' || val > UINT32_MAX) return false;
+    if (end == s || *end != '\0' || errno == ERANGE || val > UINT32_MAX) return false;
     *out = static_cast<uint32_t>(val);
     return true;
 }
@@ -72,10 +80,60 @@ static bool parse_uint32(const char *s, uint32_t *out) {
  */
 static bool parse_uint16(const char *s, uint16_t *out) {
     if (!s || !*s) return false;
+    if (*s < '0' || *s > '9') return false;
     char *end;
+    errno = 0;
     const unsigned long val = strtoul(s, &end, 10);
-    if (end == s || *end != '\0' || val > UINT16_MAX) return false;
+    if (end == s || *end != '\0' || errno == ERANGE || val > UINT16_MAX) return false;
     *out = static_cast<uint16_t>(val);
+    return true;
+}
+
+static const cJSON *required_string_field(const cJSON *payload, const char *name) {
+    const cJSON *item = cJSON_GetObjectItem(payload, name);
+    if (!cJSON_IsString(item) || item->valuestring == nullptr) {
+        ESP_LOGW(TAG, "Missing or invalid string field: %s", name);
+        return nullptr;
+    }
+    return item;
+}
+
+static const cJSON *required_number_field(const cJSON *payload, const char *name) {
+    const cJSON *item = cJSON_GetObjectItem(payload, name);
+    if (!cJSON_IsNumber(item)) {
+        ESP_LOGW(TAG, "Missing or invalid number field: %s", name);
+        return nullptr;
+    }
+    return item;
+}
+
+static bool required_uint64_string_field(const cJSON *payload, const char *name, uint64_t *out) {
+    const cJSON *item = required_string_field(payload, name);
+    if (!item) return false;
+    if (!parse_uint64(item->valuestring, out)) {
+        ESP_LOGW(TAG, "Invalid uint64 string field: %s", name);
+        return false;
+    }
+    return true;
+}
+
+static bool required_uint32_string_field(const cJSON *payload, const char *name, uint32_t *out) {
+    const cJSON *item = required_string_field(payload, name);
+    if (!item) return false;
+    if (!parse_uint32(item->valuestring, out)) {
+        ESP_LOGW(TAG, "Invalid uint32 string field: %s", name);
+        return false;
+    }
+    return true;
+}
+
+static bool required_uint16_string_field(const cJSON *payload, const char *name, uint16_t *out) {
+    const cJSON *item = required_string_field(payload, name);
+    if (!item) return false;
+    if (!parse_uint16(item->valuestring, out)) {
+        ESP_LOGW(TAG, "Invalid uint16 string field: %s", name);
+        return false;
+    }
     return true;
 }
 
@@ -108,14 +166,28 @@ static esp_err_t process_command_message(const char *action, const cJSON *payloa
     }
     // thread.dataset_init
     if (strcmp(action, "thread.dataset.init") == 0) {
+        const cJSON *channel = required_number_field(payload, "channel");
+        const cJSON *pan_id = required_number_field(payload, "pan_id");
+        const cJSON *network_name = required_string_field(payload, "network_name");
+        const cJSON *extended_pan_id = required_string_field(payload, "extended_pan_id");
+        const cJSON *mesh_local_prefix = required_string_field(payload, "mesh_local_prefix");
+        const cJSON *master_key = required_string_field(payload, "master_key");
+        const cJSON *pskc = required_string_field(payload, "pskc");
+
+        if (!channel || !pan_id || !network_name || !extended_pan_id ||
+            !mesh_local_prefix || !master_key || !pskc) {
+            ESP_LOGW(TAG, "Invalid Thread dataset init payload");
+            return ESP_ERR_INVALID_ARG;
+        }
+
         return execute_thread_dataset_init_command(
-            cJSON_GetObjectItem(payload, "channel")->valueint,
-            cJSON_GetObjectItem(payload, "pan_id")->valueint,
-            cJSON_GetObjectItem(payload, "network_name")->valuestring,
-            cJSON_GetObjectItem(payload, "extended_pan_id")->valuestring,
-            cJSON_GetObjectItem(payload, "mesh_local_prefix")->valuestring,
-            cJSON_GetObjectItem(payload, "master_key")->valuestring,
-            cJSON_GetObjectItem(payload, "pskc")->valuestring
+            channel->valueint,
+            pan_id->valueint,
+            network_name->valuestring,
+            extended_pan_id->valuestring,
+            mesh_local_prefix->valuestring,
+            master_key->valuestring,
+            pskc->valuestring
         );
     }
     // thread.status_get
@@ -124,6 +196,7 @@ static esp_err_t process_command_message(const char *action, const cJSON *payloa
         esp_err_t ret = execute_thread_status_get_command(&is_running);
         if (ret == ESP_OK) {
             ESP_LOGI(TAG, "Thread status - Running: %s", is_running ? "true" : "false");
+            ret = broadcast_info_thread_stack_status_message(is_running);
         }
         return ret;
     }
@@ -133,6 +206,7 @@ static esp_err_t process_command_message(const char *action, const cJSON *payloa
         esp_err_t ret = execute_thread_attached_get_command(&is_attached);
         if (ret == ESP_OK) {
             ESP_LOGI(TAG, "Thread attached state: %s", is_attached ? "attached" : "not attached");
+            ret = broadcast_info_thread_attachment_status_message(is_attached);
         }
         return ret;
     }
@@ -142,35 +216,49 @@ static esp_err_t process_command_message(const char *action, const cJSON *payloa
         esp_err_t ret = execute_thread_role_get_command(&role_str);
         if (ret == ESP_OK) {
             ESP_LOGI(TAG, "Thread role: %s", role_str);
+            ret = broadcast_info_thread_role_message(role_str);
         }
         return ret;
     }
     // thread.active_dataset_get
     if (strcmp(action, "thread.active_dataset_get") == 0) {
-        char json_buf[512]; // Example buffer size
-        esp_err_t ret = execute_thread_active_dataset_get_command(json_buf, sizeof(json_buf));
+        otOperationalDataset dataset;
+        esp_err_t ret = thread_get_active_dataset(&dataset);
         if (ret == ESP_OK) {
-            ESP_LOGI(TAG, "Active Dataset: %s", json_buf);
+            ret = broadcast_info_active_dataset_message(
+                dataset.mActiveTimestamp.mSeconds,
+                (const char *)dataset.mNetworkName.m8,
+                dataset.mExtendedPanId.m8,
+                dataset.mMeshLocalPrefix.m8,
+                dataset.mPanId,
+                dataset.mChannel
+            );
+        } else {
+            ESP_LOGW(TAG, "Failed to get active dataset");
         }
         return ret;
     }
     // thread.unicast_addresses_get
     if (strcmp(action, "thread.unicast_addresses_get") == 0) {
-        char *addresses[10];
-        size_t count;
-        esp_err_t ret = execute_thread_unicast_addresses_get_command(addresses, 10, &count);
+        char *addresses[THREAD_ADDRESS_LIST_MAX] = {nullptr};
+        size_t count = 0;
+        esp_err_t ret = execute_thread_unicast_addresses_get_command(addresses, THREAD_ADDRESS_LIST_MAX, &count);
         if (ret == ESP_OK) {
             ESP_LOGI(TAG, "Unicast addresses count: %zu", count);
+            ret = broadcast_info_unicast_addresses_message(const_cast<const char **>(addresses), count);
+            thread_free_address_list(addresses, count);
         }
         return ret;
     }
     // thread.multicast_addresses_get
     if (strcmp(action, "thread.multicast_addresses_get") == 0) {
-        char *addresses[10];
-        size_t count;
-        esp_err_t ret = execute_thread_multicast_addresses_get_command(addresses, 10, &count);
+        char *addresses[THREAD_ADDRESS_LIST_MAX] = {nullptr};
+        size_t count = 0;
+        esp_err_t ret = execute_thread_multicast_addresses_get_command(addresses, THREAD_ADDRESS_LIST_MAX, &count);
         if (ret == ESP_OK) {
             ESP_LOGI(TAG, "Multicast addresses count: %zu", count);
+            ret = broadcast_info_multicast_addresses_message(const_cast<const char **>(addresses), count);
+            thread_free_address_list(addresses, count);
         }
         return ret;
     }
@@ -190,9 +278,9 @@ static esp_err_t process_command_message(const char *action, const cJSON *payloa
 #if CONFIG_ENABLE_WIFI_STATION
     // wifi.sta_connect
     if (strcmp(action, "wifi.sta_connect") == 0) {
-        const cJSON *ssid = cJSON_GetObjectItem(payload, "ssid");
-        const cJSON *password = cJSON_GetObjectItem(payload, "password");
-        if (!cJSON_IsString(ssid) || !cJSON_IsString(password)) {
+        const cJSON *ssid = required_string_field(payload, "ssid");
+        const cJSON *password = required_string_field(payload, "password");
+        if (!ssid || !password) {
             ESP_LOGW(TAG, "Invalid Wi-Fi payload");
             return ESP_ERR_INVALID_ARG;
         }
@@ -204,34 +292,32 @@ static esp_err_t process_command_message(const char *action, const cJSON *payloa
     // Matter commands defined in matter_command.h
     // matter.controller_init
     if (strcmp(action, "matter.controller_init") == 0) {
-        const cJSON *node_id = cJSON_GetObjectItem(payload, "node_id");
-        const cJSON *fabric_id = cJSON_GetObjectItem(payload, "fabric_id");
-        const cJSON *listen_port = cJSON_GetObjectItem(payload, "listen_port");
-        if (!cJSON_IsString(node_id) || !cJSON_IsNumber(fabric_id) || !cJSON_IsNumber(listen_port)) {
+        uint64_t node_id_val;
+        const cJSON *fabric_id = required_number_field(payload, "fabric_id");
+        const cJSON *listen_port = required_number_field(payload, "listen_port");
+        if (!required_uint64_string_field(payload, "node_id", &node_id_val) ||
+            !fabric_id ||
+            !listen_port) {
             ESP_LOGW(TAG, "Invalid Matter init payload");
             return ESP_ERR_INVALID_ARG;
         }
 
         return execute_matter_controller_init_command(
-            static_cast<uint64_t>(node_id->valueint),
+            node_id_val,
             static_cast<uint64_t>(fabric_id->valuedouble),
             static_cast<uint16_t>(listen_port->valueint)
         );
     }
     // matter.pair_ble_thread
     if (strcmp(action, "matter.pair_ble_thread") == 0) {
-        const cJSON *node_id = cJSON_GetObjectItem(payload, "node_id");
-        const cJSON *setup_code = cJSON_GetObjectItem(payload, "setup_code");
-        const cJSON *discriminator = cJSON_GetObjectItem(payload, "discriminator");
-
         uint64_t node_id_val;
         uint32_t pin;
         uint16_t disc;
 
-        if (!parse_uint64(node_id->valuestring, &node_id_val) ||
-            !parse_uint32(setup_code->valuestring, &pin) ||
-            !parse_uint16(discriminator->valuestring, &disc)) {
-            ESP_LOGW(TAG, "BLE pairing values invalid");
+        if (!required_uint64_string_field(payload, "node_id", &node_id_val) ||
+            !required_uint32_string_field(payload, "setup_code", &pin) ||
+            !required_uint16_string_field(payload, "discriminator", &disc)) {
+            ESP_LOGW(TAG, "Invalid BLE pairing payload");
             return ESP_ERR_INVALID_ARG;
         }
 
@@ -240,19 +326,22 @@ static esp_err_t process_command_message(const char *action, const cJSON *payloa
 
     // matter.cluster_command_invoke
     if (strcmp(action, "matter.cluster_command_invoke") == 0) {
-        const cJSON *dest = cJSON_GetObjectItem(payload, "destination_id");
-        const cJSON *ep = cJSON_GetObjectItem(payload, "endpoint_id");
-        const cJSON *cluster = cJSON_GetObjectItem(payload, "cluster_id");
-        const cJSON *cmd = cJSON_GetObjectItem(payload, "command_id");
-        const cJSON *data = cJSON_GetObjectItem(payload, "command_data");
-        if (!cJSON_IsString(dest) || !cJSON_IsNumber(ep) || !cJSON_IsNumber(cluster) || !cJSON_IsNumber(cmd) || !
-            cJSON_IsString(data)) {
+        uint64_t destination_id_val;
+        const cJSON *ep = required_number_field(payload, "endpoint_id");
+        const cJSON *cluster = required_number_field(payload, "cluster_id");
+        const cJSON *cmd = required_number_field(payload, "command_id");
+        const cJSON *data = required_string_field(payload, "command_data");
+        if (!required_uint64_string_field(payload, "destination_id", &destination_id_val) ||
+            !ep ||
+            !cluster ||
+            !cmd ||
+            !data) {
             ESP_LOGW(TAG, "Invalid invoke payload");
             return ESP_ERR_INVALID_ARG;
         }
 
 
-        return execute_cmd_invoke_command(static_cast<uint64_t>(dest->valueint),
+        return execute_cmd_invoke_command(destination_id_val,
                                           static_cast<uint16_t>(ep->valueint),
                                           static_cast<uint32_t>(cluster->valueint),
                                           static_cast<uint32_t>(cmd->valueint),
@@ -261,17 +350,20 @@ static esp_err_t process_command_message(const char *action, const cJSON *payloa
 
     // matter.attribute_read
     if (strcmp(action, "matter.attribute_read") == 0) {
-        const cJSON *node = cJSON_GetObjectItem(payload, "node_id");
-        const cJSON *ep = cJSON_GetObjectItem(payload, "endpoint_id");
-        const cJSON *cluster = cJSON_GetObjectItem(payload, "cluster_id");
-        const cJSON *attr = cJSON_GetObjectItem(payload, "attribute_id");
-        if (!cJSON_IsString(node) || !cJSON_IsNumber(ep) || !cJSON_IsNumber(cluster) || !cJSON_IsNumber(attr)) {
+        uint64_t node_id_val;
+        const cJSON *ep = required_number_field(payload, "endpoint_id");
+        const cJSON *cluster = required_number_field(payload, "cluster_id");
+        const cJSON *attr = required_number_field(payload, "attribute_id");
+        if (!required_uint64_string_field(payload, "node_id", &node_id_val) ||
+            !ep ||
+            !cluster ||
+            !attr) {
             ESP_LOGW(TAG, "Invalid read-attr payload");
             return ESP_ERR_INVALID_ARG;
         }
 
         return execute_attr_read_command(
-            static_cast<uint64_t>(node->valueint),
+            node_id_val,
             static_cast<uint16_t>(ep->valueint),
             static_cast<uint32_t>(cluster->valueint),
             static_cast<uint32_t>(attr->valueint));
@@ -279,20 +371,24 @@ static esp_err_t process_command_message(const char *action, const cJSON *payloa
 
     // matter.attribute_subscribe
     if (strcmp(action, "matter.attribute_subscribe") == 0) {
-        const cJSON *node = cJSON_GetObjectItem(payload, "node_id");
-        const cJSON *ep = cJSON_GetObjectItem(payload, "endpoint_id");
-        const cJSON *cluster = cJSON_GetObjectItem(payload, "cluster_id");
-        const cJSON *attr = cJSON_GetObjectItem(payload, "attribute_id");
-        const cJSON *min = cJSON_GetObjectItem(payload, "min_interval");
-        const cJSON *max = cJSON_GetObjectItem(payload, "max_interval");
-        if (!cJSON_IsString(node) || !cJSON_IsNumber(ep) || !cJSON_IsNumber(cluster) ||
-            !cJSON_IsNumber(attr) || !cJSON_IsNumber(min) || !cJSON_IsNumber(max)) {
+        uint64_t node_id_val;
+        const cJSON *ep = required_number_field(payload, "endpoint_id");
+        const cJSON *cluster = required_number_field(payload, "cluster_id");
+        const cJSON *attr = required_number_field(payload, "attribute_id");
+        const cJSON *min = required_number_field(payload, "min_interval");
+        const cJSON *max = required_number_field(payload, "max_interval");
+        if (!required_uint64_string_field(payload, "node_id", &node_id_val) ||
+            !ep ||
+            !cluster ||
+            !attr ||
+            !min ||
+            !max) {
             ESP_LOGW(TAG, "Invalid subscribe-attr payload");
             return ESP_ERR_INVALID_ARG;
         }
 
         return execute_attr_subscribe_command(
-            static_cast<uint64_t>(node->valueint),
+            node_id_val,
             static_cast<uint16_t>(ep->valueint),
             static_cast<uint32_t>(cluster->valueint),
             static_cast<uint32_t>(attr->valueint),

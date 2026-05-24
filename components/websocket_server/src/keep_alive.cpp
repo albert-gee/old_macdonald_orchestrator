@@ -178,7 +178,6 @@ static bool unregister_client(wss_keep_alive_storage *h, const int client_fd) {
             return true;
         }
     }
-    ESP_LOGW(TAG, "Attempted to remove invalid fd:%d", client_fd);
     return false;
 }
 

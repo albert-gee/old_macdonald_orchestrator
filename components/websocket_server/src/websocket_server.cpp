@@ -131,6 +131,24 @@ static bool send_ping_to_client(wss_keep_alive_t h, const int fd) {
     return true;
 }
 
+static bool send_pong_to_client(httpd_handle_t server_handle, const int fd) {
+    httpd_ws_frame_t pong = {
+        .final = true,
+        .fragmented = false,
+        .type = HTTPD_WS_TYPE_PONG,
+        .payload = nullptr,
+        .len = 0
+    };
+
+    const esp_err_t err = httpd_ws_send_frame_async(server_handle, fd, &pong);
+    if (err != ESP_OK) {
+        ESP_LOGE("websocket_server", "Failed to send pong to fd=%d: %s", fd, esp_err_to_name(err));
+        return false;
+    }
+
+    return true;
+}
+
 /**
  * Processes an incoming WebSocket frame and performs actions based
  * on the frame type. Handles text frames, pong frames, and close frames.
@@ -142,17 +160,27 @@ static bool send_ping_to_client(wss_keep_alive_t h, const int fd) {
 static void process_frame(const httpd_ws_frame_t &frame, const int fd) {
     switch (frame.type) {
         case HTTPD_WS_TYPE_TEXT:
+            wss_keep_alive_client_is_active(keep_alive, fd);
             if (message_handler) {
                 message_handler(reinterpret_cast<const char *>(frame.payload));
             }
             break;
+
+        case HTTPD_WS_TYPE_PING:
+            ESP_LOGD("websocket_server", "Received ping from fd=%d", fd);
+            wss_keep_alive_client_is_active(keep_alive, fd);
+            send_pong_to_client(server, fd);
+            break;
+
         case HTTPD_WS_TYPE_PONG:
             ESP_LOGD("websocket_server", "Received pong from fd=%d", fd);
             wss_keep_alive_client_is_active(keep_alive, fd);
             break;
+
         case HTTPD_WS_TYPE_CLOSE:
             wss_keep_alive_remove_client(keep_alive, fd);
             break;
+
         default:
             ESP_LOGW("websocket_server", "Unhandled frame type: %d", frame.type);
             break;
