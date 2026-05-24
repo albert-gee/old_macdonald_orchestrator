@@ -1,5 +1,6 @@
 #include "event_handlers/thread_event_handler.h"
 #include "messages/outbound_message_builder.h"
+#include "state/orchestrator_state.h"
 #include "thread_util.h"
 
 #include <esp_log.h>
@@ -16,10 +17,12 @@ void handle_thread_event(void *arg, const esp_event_base_t event_base, const int
 
     switch (event_id) {
         case OPENTHREAD_EVENT_START:
+            orchestrator_state_set_thread_enabled(true);
             broadcast_info_thread_stack_status_message(true);
             break;
 
         case OPENTHREAD_EVENT_STOP:
+            orchestrator_state_set_thread_enabled(false);
             broadcast_info_thread_stack_status_message(false);
             break;
 
@@ -32,16 +35,19 @@ void handle_thread_event(void *arg, const esp_event_base_t event_base, const int
             break;
 
         case OPENTHREAD_EVENT_ATTACHED:
+            orchestrator_state_set_thread_attached(true);
             broadcast_info_thread_attachment_status_message(true);
             break;
 
         case OPENTHREAD_EVENT_DETACHED:
+            orchestrator_state_set_thread_attached(false);
             broadcast_info_thread_attachment_status_message(false);
             break;
 
                 case OPENTHREAD_EVENT_ROLE_CHANGED: {
             const char *role_str = nullptr;
             if (thread_get_device_role_string(&role_str) == ESP_OK && role_str != nullptr) {
+                orchestrator_state_set_thread_role(role_str);
                 broadcast_info_thread_role_message(role_str);
             } else {
                 ESP_LOGW(TAG, "Failed to get Thread role string");
@@ -88,6 +94,7 @@ void handle_thread_event(void *arg, const esp_event_base_t event_base, const int
         case OPENTHREAD_EVENT_DATASET_CHANGED: {
             otOperationalDataset dataset;
             if (thread_get_active_dataset(&dataset) == ESP_OK) {
+                orchestrator_state_set_thread_dataset_present(true);
                 broadcast_info_active_dataset_message(
                     dataset.mActiveTimestamp.mSeconds,
                     (const char *)dataset.mNetworkName.m8,

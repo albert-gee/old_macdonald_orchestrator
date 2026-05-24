@@ -13,7 +13,7 @@ extern "C" {
  * @param inbound_message The incoming JSON message as a string.
  * @return ESP_OK on success, or an error code on failure.
  */
-esp_err_t handle_json_inbound_message(const char *inbound_message);
+esp_err_t handle_json_inbound_message(const char *inbound_message, int client_fd);
 
 #ifdef __cplusplus
 }

@@ -23,7 +23,7 @@ esp_err_t matter_controller_init(const uint64_t node_id, const uint64_t fabric_i
                                      chip::TLV::TLVReader *),
                                 void (*subscribe_done_callback)(uint64_t remote_node_id, uint32_t subscription_id)
                                 ) {
-    if (!read_attribute_data_callback || !subscribe_done_cb) {
+    if (!read_attribute_data_callback || !subscribe_done_callback) {
         ESP_LOGE(TAG, "Invalid read attribute callback");
         return ESP_ERR_INVALID_ARG;
     }

@@ -3,15 +3,22 @@
 #include "commands/wifi_commands.h"
 #include "commands/thread_commands.h"
 #include "messages/outbound_message_builder.h"
+#include "registry/device_registry.h"
 #include "sdkconfig.h"
+#include "state/orchestrator_state.h"
 #include "thread_util.h"
+#include "websocket_server.h"
 
 #include <cJSON.h>
+#include <esp_check.h>
 #include <esp_event.h>
 #include <esp_log.h>
+#include <esp_err.h>
 #include <cerrno>
 #include <cstring>
 #include <cstdlib>
+#include <cstdio>
+#include <inttypes.h>
 
 static const char *TAG = "JSON_INBOUND_HANDLER";
 
@@ -105,6 +112,70 @@ static const cJSON *required_number_field(const cJSON *payload, const char *name
         return nullptr;
     }
     return item;
+}
+
+static esp_err_t send_json_to_client(cJSON *root, const int client_fd) {
+    char *json = cJSON_PrintUnformatted(root);
+    if (!json) return ESP_FAIL;
+    esp_err_t err = websocket_send_message_to_client(client_fd, json);
+    free(json);
+    return err;
+}
+
+static esp_err_t send_protocol_error(const int client_fd, const char *code, const char *message) {
+    cJSON *root = cJSON_CreateObject();
+    cJSON *error = cJSON_CreateObject();
+    if (!root || !error) {
+        cJSON_Delete(root);
+        cJSON_Delete(error);
+        return ESP_ERR_NO_MEM;
+    }
+    cJSON_AddStringToObject(root, "type", "error");
+    cJSON_AddStringToObject(error, "code", code);
+    cJSON_AddStringToObject(error, "message", message);
+    cJSON_AddItemToObject(root, "error", error);
+    esp_err_t err = send_json_to_client(root, client_fd);
+    cJSON_Delete(root);
+    return err;
+}
+
+static const char *error_code_for_result(esp_err_t err, bool unknown_action) {
+    if (unknown_action) return "UNKNOWN_ACTION";
+    return esp_err_to_name(err);
+}
+
+static esp_err_t send_command_result(const int client_fd, const char *request_id, const char *action,
+                                     esp_err_t command_err, cJSON *payload, bool unknown_action) {
+    cJSON *root = cJSON_CreateObject();
+    if (!root) {
+        cJSON_Delete(payload);
+        return ESP_ERR_NO_MEM;
+    }
+
+    cJSON_AddStringToObject(root, "type", "command_result");
+    cJSON_AddStringToObject(root, "request_id", request_id);
+    cJSON_AddStringToObject(root, "action", action);
+    cJSON_AddBoolToObject(root, "ok", command_err == ESP_OK);
+
+    if (command_err == ESP_OK) {
+        cJSON_AddItemToObject(root, "payload", payload ? payload : cJSON_CreateObject());
+    } else {
+        cJSON_Delete(payload);
+        cJSON *error = cJSON_CreateObject();
+        cJSON_AddStringToObject(error, "code", error_code_for_result(command_err, unknown_action));
+        if (unknown_action) {
+            char msg[96];
+            snprintf(msg, sizeof(msg), "Unsupported command action: %s", action);
+            cJSON_AddStringToObject(error, "message", msg);
+        } else {
+            cJSON_AddStringToObject(error, "message", esp_err_to_name(command_err));
+        }
+        cJSON_AddItemToObject(root, "error", error);
+    }
+
+    esp_err_t err = send_json_to_client(root, client_fd);
+    cJSON_Delete(root);
+    return err;
 }
 
 static bool required_uint64_string_field(const cJSON *payload, const char *name, uint64_t *out) {
@@ -290,6 +361,82 @@ static esp_err_t process_command_message(const char *action, const cJSON *payloa
 #endif
 
     // Matter commands defined in matter_command.h
+    if (strcmp(action, "chamber.status_get") == 0) {
+        return ESP_OK;
+    }
+
+    if (strcmp(action, "device.list") == 0) {
+        return ESP_OK;
+    }
+
+    if (strcmp(action, "device.get") == 0) {
+        const cJSON *device_id = required_string_field(payload, "device_id");
+        DeviceRecord record = {};
+        if (!device_id) return ESP_ERR_INVALID_ARG;
+        return device_registry_get(device_id->valuestring, &record);
+    }
+
+    if (strcmp(action, "device.remove") == 0) {
+        const cJSON *device_id = required_string_field(payload, "device_id");
+        if (!device_id) return ESP_ERR_INVALID_ARG;
+        return device_registry_remove(device_id->valuestring);
+    }
+
+    if (strcmp(action, "device.rename") == 0) {
+        const cJSON *device_id = required_string_field(payload, "device_id");
+        const cJSON *label = required_string_field(payload, "label");
+        if (!device_id || !label) return ESP_ERR_INVALID_ARG;
+        return device_registry_rename(device_id->valuestring, label->valuestring);
+    }
+
+    if (strcmp(action, "device.temperature.read") == 0 ||
+        strcmp(action, "device.pressure.read") == 0 ||
+        strcmp(action, "device.attribute.read") == 0 ||
+        strcmp(action, "device.attribute.subscribe") == 0) {
+        const cJSON *device_id = required_string_field(payload, "device_id");
+        if (!device_id) return ESP_ERR_INVALID_ARG;
+
+        DeviceRecord record = {};
+        ESP_RETURN_ON_ERROR(device_registry_get(device_id->valuestring, &record), TAG, "Device not found");
+
+        uint32_t cluster_id = 0;
+        uint32_t attribute_id = 0;
+        if (strcmp(action, "device.temperature.read") == 0) {
+            cluster_id = 0x0402;
+            attribute_id = 0x0000;
+        } else if (strcmp(action, "device.pressure.read") == 0) {
+            cluster_id = 0x0403;
+            attribute_id = 0x0000;
+        } else {
+            const cJSON *cluster = required_number_field(payload, "cluster_id");
+            const cJSON *attr = required_number_field(payload, "attribute_id");
+            if (!cluster || !attr) return ESP_ERR_INVALID_ARG;
+            cluster_id = static_cast<uint32_t>(cluster->valueint);
+            attribute_id = static_cast<uint32_t>(attr->valueint);
+        }
+
+        if (strcmp(action, "device.attribute.subscribe") == 0) {
+            const cJSON *min = required_number_field(payload, "min_interval");
+            const cJSON *max = required_number_field(payload, "max_interval");
+            if (!min || !max) return ESP_ERR_INVALID_ARG;
+            return execute_attr_subscribe_command(record.node_id, record.endpoint_id, cluster_id, attribute_id,
+                                                  static_cast<uint16_t>(min->valueint),
+                                                  static_cast<uint16_t>(max->valueint));
+        }
+
+        return execute_attr_read_command(record.node_id, record.endpoint_id, cluster_id, attribute_id);
+    }
+
+    if (strcmp(action, "device.relay.set") == 0) {
+        const cJSON *device_id = required_string_field(payload, "device_id");
+        const cJSON *on = cJSON_GetObjectItem(payload, "on");
+        if (!device_id || !cJSON_IsBool(on)) return ESP_ERR_INVALID_ARG;
+
+        DeviceRecord record = {};
+        ESP_RETURN_ON_ERROR(device_registry_get(device_id->valuestring, &record), TAG, "Device not found");
+        return execute_cmd_invoke_command(record.node_id, record.endpoint_id, 0x0006, cJSON_IsTrue(on) ? 0x01 : 0x00, "{}");
+    }
+
     // matter.controller_init
     if (strcmp(action, "matter.controller_init") == 0) {
         uint64_t node_id_val;
@@ -397,11 +544,72 @@ static esp_err_t process_command_message(const char *action, const cJSON *payloa
         );
     }
 
-    ESP_LOGW(TAG, "Unknown action");
-    return ESP_ERR_INVALID_ARG;
+    ESP_LOGW(TAG, "Unknown action: %s", action);
+    return ESP_ERR_NOT_SUPPORTED;
 }
 
-esp_err_t handle_json_inbound_message(const char *inbound_message) {
+static cJSON *build_success_payload(const char *action, const cJSON *payload) {
+    if (strcmp(action, "device.list") == 0) {
+        return device_registry_to_json();
+    }
+
+    if (strcmp(action, "chamber.status_get") == 0) {
+        return orchestrator_state_to_json();
+    }
+
+    if (strcmp(action, "thread.status_get") == 0) {
+        cJSON *out = cJSON_CreateObject();
+        bool is_running = false;
+        if (execute_thread_status_get_command(&is_running) == ESP_OK) {
+            cJSON_AddBoolToObject(out, "running", is_running);
+        }
+        return out;
+    }
+
+    if (strcmp(action, "device.get") == 0) {
+        const cJSON *device_id = required_string_field(payload, "device_id");
+        if (!device_id) return cJSON_CreateObject();
+        DeviceRecord record = {};
+        if (device_registry_get(device_id->valuestring, &record) != ESP_OK) return cJSON_CreateObject();
+        cJSON *out = cJSON_CreateObject();
+        char node_id[24];
+        snprintf(node_id, sizeof(node_id), "%" PRIu64, record.node_id);
+        cJSON_AddStringToObject(out, "device_id", record.device_id);
+        cJSON_AddStringToObject(out, "node_id", node_id);
+        cJSON_AddNumberToObject(out, "endpoint_id", record.endpoint_id);
+        cJSON_AddNumberToObject(out, "device_type_id", record.device_type_id);
+        cJSON_AddStringToObject(out, "label", record.label);
+        cJSON_AddBoolToObject(out, "reachable", record.reachable);
+        return out;
+    }
+
+    if (strncmp(action, "device.", strlen("device.")) == 0) {
+        cJSON *out = cJSON_CreateObject();
+        const cJSON *device_id = cJSON_GetObjectItem(payload, "device_id");
+        if (cJSON_IsString(device_id)) {
+            cJSON_AddStringToObject(out, "device_id", device_id->valuestring);
+        }
+        if (strcmp(action, "device.relay.set") == 0) {
+            const cJSON *on = cJSON_GetObjectItem(payload, "on");
+            cJSON_AddBoolToObject(out, "on", cJSON_IsTrue(on));
+        }
+        return out;
+    }
+
+    return cJSON_CreateObject();
+}
+
+esp_err_t handle_json_inbound_message(const char *inbound_message, const int client_fd) {
+    if (inbound_message && strcmp(inbound_message, "__client_connected__") == 0) {
+        orchestrator_state_set_websocket_client_count(websocket_server_client_count());
+        return orchestrator_state_send_snapshot_to_client(client_fd);
+    }
+
+    if (inbound_message && strcmp(inbound_message, "__client_disconnected__") == 0) {
+        orchestrator_state_set_websocket_client_count(websocket_server_client_count());
+        return ESP_OK;
+    }
+
     if (!inbound_message) {
         ESP_LOGE(TAG, "Null inbound message");
         return ESP_ERR_INVALID_ARG;
@@ -410,30 +618,34 @@ esp_err_t handle_json_inbound_message(const char *inbound_message) {
     cJSON *root = cJSON_Parse(inbound_message);
     if (!root) {
         ESP_LOGE(TAG, "JSON parse error");
-        return ESP_ERR_INVALID_ARG;
+        return send_protocol_error(client_fd, "INVALID_JSON", "Message is not valid JSON");
     }
 
     cJSON *type = cJSON_GetObjectItemCaseSensitive(root, "type");
+    cJSON *request_id = cJSON_GetObjectItemCaseSensitive(root, "request_id");
     cJSON *action = cJSON_GetObjectItemCaseSensitive(root, "action");
     cJSON *payload = cJSON_GetObjectItemCaseSensitive(root, "payload");
 
     esp_err_t ret = ESP_OK;
 
-    // Validate the message structure: type, action, payload
     if (!cJSON_IsString(type)) {
-        ESP_LOGW(TAG, "Invalid or missing 'type' (expected: 'command')");
-        ret = ESP_ERR_INVALID_ARG;
+        ret = send_protocol_error(client_fd, "MISSING_TYPE", "Missing required field: type");
+    } else if (strcmp(type->valuestring, "command") != 0) {
+        ret = send_protocol_error(client_fd, "UNSUPPORTED_TYPE", "Unsupported message type");
+    } else if (!cJSON_IsString(request_id) || !request_id->valuestring[0]) {
+        ret = send_protocol_error(client_fd, "MISSING_REQUEST_ID", "Command messages require request_id");
     } else if (!cJSON_IsString(action)) {
-        ESP_LOGW(TAG, "Missing or invalid 'action' field");
-        ret = ESP_ERR_INVALID_ARG;
+        ret = send_protocol_error(client_fd, "MISSING_ACTION", "Command messages require action");
     } else if (!cJSON_IsObject(payload)) {
-        ESP_LOGW(TAG, "Missing or invalid 'payload' field");
-        ret = ESP_ERR_INVALID_ARG;
+        ret = send_protocol_error(client_fd, "INVALID_PAYLOAD", "Command payload must be an object");
     }
 
-    // If the message is valid, process it
-    if (ret == ESP_OK && strcmp(type->valuestring, "command") == 0) {
+    if (ret == ESP_OK) {
         ret = process_command_message(action->valuestring, payload);
+        const bool unknown_action = ret == ESP_ERR_NOT_SUPPORTED;
+        cJSON *success_payload = ret == ESP_OK ? build_success_payload(action->valuestring, payload) : nullptr;
+        ret = send_command_result(client_fd, request_id->valuestring, action->valuestring,
+                                  ret, success_payload, unknown_action);
     }
 
     cJSON_Delete(root);

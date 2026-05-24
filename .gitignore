@@ -7,6 +7,11 @@ sdkconfig.old
 /components/websocket_server/certs/rootCA.pem
 /components/websocket_server/certs/rootCA.srl
 /components/websocket_server/certs/servercert.pem
+/components/websocket_server/certs/*.key
+/components/websocket_server/certs/*.pem
+!/components/websocket_server/certs/README.md
+!/components/websocket_server/certs/cert_generate.sh
+!/components/websocket_server/certs/.gitkeep
 
 /.idea/
 /dependencies.lock

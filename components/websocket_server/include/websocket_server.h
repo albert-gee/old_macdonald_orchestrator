@@ -2,12 +2,13 @@
 #define WEBSOCKET_SERVER_H
 
 #include <esp_err.h>
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef esp_err_t (*ws_inbound_message_handler_t)(const char *json);
+typedef esp_err_t (*ws_inbound_message_handler_t)(const char *json, int client_fd);
 
 /**
  * Starts the WebSocket server and initializes its necessary components.
@@ -78,6 +79,8 @@ esp_err_t websocket_send_message_to_client(int fd, const char *message);
  *     - ESP_FAIL: Failed to retrieve the client list or send the frame to one or more clients.
  */
 esp_err_t websocket_broadcast_message(const char *message);
+
+size_t websocket_server_client_count(void);
 
 #ifdef __cplusplus
 }

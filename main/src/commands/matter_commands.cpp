@@ -2,9 +2,13 @@
 
 #include "matter_interface.h"
 #include "matter_controller.h"
+#include "registry/device_registry.h"
+#include "state/orchestrator_state.h"
 #include "thread_util.h"
 
 #include <cstring>
+#include <cstdio>
+#include <inttypes.h>
 
 #include "event_handlers/chip_event_handler.h"
 
@@ -20,7 +24,22 @@ esp_err_t execute_matter_pair_ble_thread_command(const uint64_t node_id, const u
         return err;
     }
 
-    return pairing_ble_thread(node_id, pin, discriminator, tlvs, dataset_len);
+    // pairing_ble_thread copies the dataset into the Matter command path; this caller owns tlvs.
+    err = pairing_ble_thread(node_id, pin, discriminator, tlvs, dataset_len);
+    free(tlvs);
+
+    if (err == ESP_OK) {
+        DeviceRecord record = {};
+        snprintf(record.device_id, sizeof(record.device_id), "node-%" PRIu64, node_id);
+        snprintf(record.label, sizeof(record.label), "Matter node %" PRIu64, node_id);
+        record.node_id = node_id;
+        record.endpoint_id = 1;
+        record.device_type_id = 0;
+        record.reachable = true;
+        device_registry_upsert(&record);
+    }
+
+    return err;
 }
 
 esp_err_t execute_cmd_invoke_command(const uint64_t destination_id, const uint16_t endpoint_id,
@@ -40,5 +59,10 @@ esp_err_t execute_attr_subscribe_command(uint64_t node_id, const uint16_t endpoi
 }
 
 esp_err_t execute_matter_controller_init_command(const uint64_t node_id, const uint64_t fabric_id, const uint16_t listen_port) {
-    return matter_controller_init(node_id, fabric_id, listen_port, attribute_data_report_callback, subscribe_done_callback);
+    esp_err_t err = matter_controller_init(node_id, fabric_id, listen_port, attribute_data_report_callback, subscribe_done_callback);
+    if (err == ESP_OK) {
+        orchestrator_state_set_matter_controller_initialized(true);
+        orchestrator_state_broadcast_snapshot();
+    }
+    return err;
 }
