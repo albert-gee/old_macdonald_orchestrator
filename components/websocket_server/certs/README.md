@@ -14,6 +14,11 @@ cd components/websocket_server/certs
 This generates local `servercert.pem` and `prvtkey.pem` files for the developer
 workstation. They are ignored by Git and must remain local.
 
+If either embedded development file is missing, the WebSocket component CMake
+configuration fails with a message telling the developer to run
+`cert_generate.sh`. Do not work around that by committing generated keys or
+certificates.
+
 Production direction: generate a unique certificate/private key on first boot
 or during provisioning, store it in device-local persistent storage such as NVS,
 encrypted NVS, LittleFS/SPIFFS, or a provisioning partition, and load it when
