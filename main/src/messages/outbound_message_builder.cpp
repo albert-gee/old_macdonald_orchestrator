@@ -59,6 +59,11 @@ static char *build_json_message(const char *type, const char *action, cJSON *pay
  * - Other values: Any specific error codes returned by the `websocket_broadcast_message` function.
  */
 static esp_err_t broadcast_message(const char *type, const char *action, cJSON *payload) {
+    if (!websocket_server_is_running()) {
+        cJSON_Delete(payload);
+        return ESP_OK;
+    }
+
     char *json_str = build_json_message(type, action, payload);
     if (!json_str) {
         ESP_LOGE(TAG, "Failed to generate JSON message");

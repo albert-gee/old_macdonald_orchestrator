@@ -2,6 +2,7 @@
 #define WEBSOCKET_SERVER_H
 
 #include <esp_err.h>
+#include <stdbool.h>
 #include <stddef.h>
 
 #ifdef __cplusplus
@@ -48,6 +49,8 @@ esp_err_t websocket_server_start(const websocket_server_handlers_t *handlers);
  * - ESP_FAIL if the server was not running.
  */
 esp_err_t websocket_server_stop(void);
+
+bool websocket_server_is_running(void);
 
 /**
  * Sends a WebSocket message to a specific client asynchronously.

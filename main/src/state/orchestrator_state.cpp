@@ -166,6 +166,10 @@ cJSON *orchestrator_state_to_json(void) {
 }
 
 static esp_err_t send_snapshot(int client_fd) {
+    if (client_fd < 0 && !websocket_server_is_running()) {
+        return ESP_OK;
+    }
+
     cJSON *root = cJSON_CreateObject();
     cJSON *payload = orchestrator_state_to_json();
     if (!root || !payload) {
@@ -199,6 +203,11 @@ esp_err_t orchestrator_state_broadcast_event(const char *event, cJSON *payload) 
     if (!event) {
         cJSON_Delete(payload);
         return ESP_ERR_INVALID_ARG;
+    }
+
+    if (!websocket_server_is_running()) {
+        cJSON_Delete(payload);
+        return ESP_OK;
     }
 
     cJSON *root = cJSON_CreateObject();
