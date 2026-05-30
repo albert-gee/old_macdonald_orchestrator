@@ -194,3 +194,37 @@ esp_err_t orchestrator_state_broadcast_snapshot(void) {
 esp_err_t orchestrator_state_send_snapshot_to_client(int client_fd) {
     return send_snapshot(client_fd);
 }
+
+esp_err_t orchestrator_state_broadcast_event(const char *event, cJSON *payload) {
+    if (!event) {
+        cJSON_Delete(payload);
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    cJSON *root = cJSON_CreateObject();
+    if (!root) {
+        cJSON_Delete(payload);
+        return ESP_ERR_NO_MEM;
+    }
+
+    cJSON_AddStringToObject(root, "type", "event");
+    cJSON_AddStringToObject(root, "event", event);
+    if (payload) {
+        cJSON_AddItemToObject(root, "payload", payload);
+    } else {
+        cJSON *empty = cJSON_CreateObject();
+        if (!empty) {
+            cJSON_Delete(root);
+            return ESP_ERR_NO_MEM;
+        }
+        cJSON_AddItemToObject(root, "payload", empty);
+    }
+
+    char *json = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!json) return ESP_FAIL;
+
+    esp_err_t err = websocket_broadcast_message(json);
+    free(json);
+    return err;
+}

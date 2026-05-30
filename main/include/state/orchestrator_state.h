@@ -26,6 +26,7 @@ esp_err_t orchestrator_state_set_websocket_client_count(size_t count);
 cJSON *orchestrator_state_to_json(void);
 esp_err_t orchestrator_state_broadcast_snapshot(void);
 esp_err_t orchestrator_state_send_snapshot_to_client(int client_fd);
+esp_err_t orchestrator_state_broadcast_event(const char *event, cJSON *payload);
 
 #ifdef __cplusplus
 }

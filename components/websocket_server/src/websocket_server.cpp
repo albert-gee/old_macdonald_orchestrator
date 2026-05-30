@@ -16,6 +16,7 @@ static httpd_handle_t server = nullptr;
 
 // Static variable to store the WebSocket inbound message handler callback.
 static ws_inbound_message_handler_t message_handler = nullptr;
+static ws_client_event_handler_t client_event_handler = nullptr;
 
 // Static variable to manage and monitor websocket client connections for the server.
 static wss_keep_alive_t keep_alive = nullptr;
@@ -85,8 +86,8 @@ static void async_send_task(void *arg) {
  */
 static void on_client_close(httpd_handle_t handle, const int fd) {
     wss_keep_alive_remove_client(keep_alive, fd);
-    if (message_handler) {
-        message_handler("__client_disconnected__", fd);
+    if (client_event_handler) {
+        client_event_handler(WS_CLIENT_DISCONNECTED, fd);
     }
     close(fd);
 }
@@ -182,8 +183,8 @@ static void process_frame(const httpd_ws_frame_t &frame, const int fd) {
 
         case HTTPD_WS_TYPE_CLOSE:
             wss_keep_alive_remove_client(keep_alive, fd);
-            if (message_handler) {
-                message_handler("__client_disconnected__", fd);
+            if (client_event_handler) {
+                client_event_handler(WS_CLIENT_DISCONNECTED, fd);
             }
             break;
 
@@ -256,15 +257,15 @@ static esp_err_t websocket_handler(httpd_req_t *req) {
     if (req->method == HTTP_GET) {
         ESP_LOGI("websocket_server", "Client connected: fd=%d", fd);
         wss_keep_alive_add_client(keep_alive, fd);
-        if (message_handler) {
-            message_handler("__client_connected__", fd);
+        if (client_event_handler) {
+            client_event_handler(WS_CLIENT_CONNECTED, fd);
         }
         return ESP_OK;
     }
 
     return receive_and_handle_frame(req);
 }
-esp_err_t websocket_server_start(const ws_inbound_message_handler_t message_handler_fun) {
+esp_err_t websocket_server_start(const websocket_server_handlers_t *handlers) {
     // Prevent starting if the server is already running
     if (server) {
         ESP_LOGW("websocket_server", "WebSocket server already running");
@@ -272,7 +273,11 @@ esp_err_t websocket_server_start(const ws_inbound_message_handler_t message_hand
     }
 
     // Set user-provided handler for message processing
-    message_handler = message_handler_fun;
+    if (!handlers || !handlers->message_handler) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    message_handler = handlers->message_handler;
+    client_event_handler = handlers->client_event_handler;
 
     // Configure keep-alive: handle inactive clients and ping checking
     wss_keep_alive_config_t ka_cfg = KEEP_ALIVE_CONFIG_DEFAULT();
@@ -338,6 +343,8 @@ esp_err_t websocket_server_stop() {
         ESP_LOGE("websocket_server", "Failed to stop WebSocket server: %s", esp_err_to_name(ret));
     }
 
+    message_handler = nullptr;
+    client_event_handler = nullptr;
     return ret;
 }
 

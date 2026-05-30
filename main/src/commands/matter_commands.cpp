@@ -33,10 +33,8 @@ esp_err_t execute_matter_pair_ble_thread_command(const uint64_t node_id, const u
         snprintf(record.device_id, sizeof(record.device_id), "node-%" PRIu64, node_id);
         snprintf(record.label, sizeof(record.label), "Matter node %" PRIu64, node_id);
         record.node_id = node_id;
-        record.endpoint_id = 1;
-        record.device_type_id = 0;
         record.reachable = true;
-        device_registry_upsert(&record);
+        device_registry_upsert_device(&record);
     }
 
     return err;
@@ -62,6 +60,7 @@ esp_err_t execute_matter_controller_init_command(const uint64_t node_id, const u
     esp_err_t err = matter_controller_init(node_id, fabric_id, listen_port, attribute_data_report_callback, subscribe_done_callback);
     if (err == ESP_OK) {
         orchestrator_state_set_matter_controller_initialized(true);
+        orchestrator_state_broadcast_event("matter.controller_initialized", nullptr);
         orchestrator_state_broadcast_snapshot();
     }
     return err;

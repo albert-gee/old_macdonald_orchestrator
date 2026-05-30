@@ -10,6 +10,18 @@ extern "C" {
 
 typedef esp_err_t (*ws_inbound_message_handler_t)(const char *json, int client_fd);
 
+enum ws_client_event_t {
+    WS_CLIENT_CONNECTED,
+    WS_CLIENT_DISCONNECTED
+};
+
+typedef void (*ws_client_event_handler_t)(ws_client_event_t event, int client_fd);
+
+struct websocket_server_handlers_t {
+    ws_inbound_message_handler_t message_handler;
+    ws_client_event_handler_t client_event_handler;
+};
+
 /**
  * Starts the WebSocket server and initializes its necessary components.
  *
@@ -22,7 +34,7 @@ typedef esp_err_t (*ws_inbound_message_handler_t)(const char *json, int client_f
  * - ESP_ERR_INVALID_ARG if the handler parameter is invalid.
  * - Other error codes indicating failures during initialization.
  */
-esp_err_t websocket_server_start(ws_inbound_message_handler_t message_handler_fun);
+esp_err_t websocket_server_start(const websocket_server_handlers_t *handlers);
 
 /**
  * Stops the WebSocket server and cleans up associated resources.
