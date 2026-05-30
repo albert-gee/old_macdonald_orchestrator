@@ -348,6 +348,10 @@ esp_err_t websocket_server_stop() {
     return ret;
 }
 
+bool websocket_server_is_running(void) {
+    return server != nullptr;
+}
+
 esp_err_t websocket_send_message_to_client(const int fd, const char *message) {
     // Validate server state and message input
     if (!server || !message) return ESP_ERR_INVALID_ARG;
