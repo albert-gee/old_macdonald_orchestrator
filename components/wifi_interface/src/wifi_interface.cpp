@@ -128,6 +128,8 @@ esp_err_t wifi_interface_init(const esp_event_handler_t event_handler) {
 
     ESP_RETURN_ON_ERROR(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, event_handler, nullptr),
                         TAG, "Failed to register event handler");
+    ESP_RETURN_ON_ERROR(esp_event_handler_register(IP_EVENT, ESP_EVENT_ANY_ID, event_handler, nullptr),
+                        TAG, "Failed to register IP event handler");
 
     if (!wifi_ap_netif) {
         wifi_ap_netif = esp_netif_create_default_wifi_ap();
@@ -146,16 +148,33 @@ esp_err_t wifi_interface_init(const esp_event_handler_t event_handler) {
 esp_err_t wifi_interface_start() {
     ESP_LOGI(TAG, "Starting Wi‑Fi");
 
-    ESP_RETURN_ON_ERROR(esp_wifi_stop(), TAG, "Failed to stop Wi‑Fi");
-    ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_APSTA), TAG, "Failed to set mode");
-
-    if (load_sta_config_from_nvs() == ESP_OK) {
-        ESP_LOGI(TAG, "STA credentials loaded from NVS");
-    } else {
-        ESP_LOGW(TAG, "No valid STA credentials found");
+    esp_err_t stop_err = esp_wifi_stop();
+    if (stop_err != ESP_OK && stop_err != ESP_ERR_WIFI_NOT_STARTED) {
+        ESP_RETURN_ON_ERROR(stop_err, TAG, "Failed to stop Wi‑Fi");
     }
 
-    return load_ap_config_from_nvs();
+    ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_APSTA), TAG, "Failed to set AP+STA mode");
+    ESP_RETURN_ON_ERROR(load_ap_config_from_nvs(), TAG, "Failed to configure AP");
+
+    bool has_sta_credentials = false;
+    if (load_sta_config_from_nvs() == ESP_OK) {
+        has_sta_credentials = true;
+        ESP_LOGI(TAG, "STA credentials loaded from NVS");
+    } else {
+        ESP_LOGW(TAG, "No valid STA credentials found; AP will still start");
+    }
+
+    ESP_RETURN_ON_ERROR(esp_wifi_start(), TAG, "Failed to start Wi‑Fi");
+
+    if (has_sta_credentials) {
+        ESP_LOGI(TAG, "Attempting STA connection");
+        esp_err_t connect_err = esp_wifi_connect();
+        if (connect_err != ESP_OK) {
+            ESP_LOGW(TAG, "STA connect failed: %s", esp_err_to_name(connect_err));
+        }
+    }
+
+    return ESP_OK;
 }
 
 esp_err_t wifi_sta_connect(const char *ssid, const char *password) {

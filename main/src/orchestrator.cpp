@@ -3,6 +3,8 @@
 #include "event_handlers/wifi_event_handler.h"
 #include "thread_interface.h"
 #include "matter_interface.h"
+#include "registry/device_registry.h"
+#include "state/orchestrator_state.h"
 #include "wifi_interface.h"
 
 #include <nvs_flash.h>
@@ -20,6 +22,12 @@ extern "C" void app_main() {
         err = nvs_flash_init();
     }
     ESP_ERROR_CHECK(err);
+
+    ESP_LOGI(TAG, "Initializing Orchestrator state");
+    ESP_ERROR_CHECK(orchestrator_state_init());
+
+    ESP_LOGI(TAG, "Initializing device registry");
+    ESP_ERROR_CHECK(device_registry_init());
 
     // Create the default event loop
     ESP_LOGI(TAG, "Creating default event loop");

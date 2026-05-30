@@ -1,4 +1,5 @@
 #include "messages/outbound_message_builder.h"
+#include "registry/device_registry.h"
 #include "websocket_server.h"
 
 #include <esp_log.h>
@@ -6,6 +7,8 @@
 #include <cJSON.h>
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>
+#include <inttypes.h>
 
 static const char *TAG = "JSON_OUTBOUND";
 
@@ -28,6 +31,8 @@ static char *build_json_message(const char *type, const char *action, cJSON *pay
 
     if (strcmp(type, "info") == 0 && action) {
         cJSON_AddStringToObject(root, "action", action);
+    } else if (strcmp(type, "event") == 0 && action) {
+        cJSON_AddStringToObject(root, "event", action);
     }
 
     cJSON_AddItemToObject(root, "payload", payload);
@@ -54,6 +59,11 @@ static char *build_json_message(const char *type, const char *action, cJSON *pay
  * - Other values: Any specific error codes returned by the `websocket_broadcast_message` function.
  */
 static esp_err_t broadcast_message(const char *type, const char *action, cJSON *payload) {
+    if (!websocket_server_is_running()) {
+        cJSON_Delete(payload);
+        return ESP_OK;
+    }
+
     char *json_str = build_json_message(type, action, payload);
     if (!json_str) {
         ESP_LOGE(TAG, "Failed to generate JSON message");
@@ -64,38 +74,6 @@ static esp_err_t broadcast_message(const char *type, const char *action, cJSON *
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to broadcast message: %s", esp_err_to_name(err));
     }
-
-    free(json_str);
-    return err;
-}
-
-/**
- * Sends a JSON-encoded message to a specified client over a websocket connection.
- *
- * This method constructs a JSON message with the specified type, action, and payload
- * and sends it to the client identified by the given file descriptor.
- * The constructed JSON string is freed after sending the message.
- *
- * @param type A string representing the type of the message. Must not be null.
- * @param action A string representing the action of the message. Can be null depending on type.
- * @param payload A cJSON pointer to the payload of the message. Must not be null.
- * @param client_fd The file descriptor of the target client to send the message to.
- * @return
- *     - ESP_OK on successful sending of the message.
- *     - ESP_FAIL if the JSON message could not be generated or sending the message failed.
- */
-static esp_err_t send_message_to_client(const char *type, const char *action, cJSON *payload, int client_fd) {
-    char *json_str = build_json_message(type, action, payload);
-    if (!json_str) {
-        ESP_LOGE(TAG, "Failed to generate JSON message");
-        return ESP_FAIL;
-    }
-
-    esp_err_t err = websocket_send_message_to_client(client_fd, json_str);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to send message: %s", esp_err_to_name(err));
-    }
-    ESP_LOGI(TAG, "Sending message: %s", json_str);
 
     free(json_str);
     return err;
@@ -262,13 +240,33 @@ esp_err_t broadcast_info_matter_attribute_report_message(
     cJSON *payload = cJSON_CreateObject();
     if (!payload) return ESP_FAIL;
 
-    cJSON_AddNumberToObject(payload, "node_id", nodeId);
+    char node_id[24];
+    snprintf(node_id, sizeof(node_id), "%" PRIu64, nodeId);
+
+    DeviceRecord record = {};
+    DeviceCapability capability = {};
+    if (device_registry_find_capability_by_path(nodeId, endpointId, clusterId, attributeId,
+                                                &record, &capability) == ESP_OK) {
+        cJSON_AddStringToObject(payload, "device_id", record.device_id);
+        cJSON_AddStringToObject(payload, "semantic_type",
+                                device_registry_semantic_type_to_string(capability.semantic_type));
+        const int raw_value = value ? atoi(value) : 0;
+        if (capability.semantic_type == DEVICE_CAPABILITY_TEMPERATURE) {
+            cJSON_AddNumberToObject(payload, "temperature_celsius", raw_value / 100.0);
+            cJSON_AddNumberToObject(payload, "raw_measured_value", raw_value);
+        } else if (capability.semantic_type == DEVICE_CAPABILITY_PRESSURE) {
+            cJSON_AddNumberToObject(payload, "pressure_kpa", raw_value / 10.0);
+            cJSON_AddNumberToObject(payload, "raw_measured_value", raw_value);
+        }
+    }
+
+    cJSON_AddStringToObject(payload, "node_id", node_id);
     cJSON_AddNumberToObject(payload, "endpoint_id", endpointId);
     cJSON_AddNumberToObject(payload, "cluster_id", clusterId);
     cJSON_AddNumberToObject(payload, "attribute_id", attributeId);
-    cJSON_AddStringToObject(payload, "value", value);
+    cJSON_AddStringToObject(payload, "value", value ? value : "");
 
-    return broadcast_message("info", "matter.attribute_report", payload);
+    return broadcast_message("event", "matter.attribute_report", payload);
 }
 
 esp_err_t broadcast_info_matter_subscribe_done_message(const uint64_t nodeId, const uint32_t subscription_id) {

@@ -1,10 +1,12 @@
 #include "event_handlers/thread_event_handler.h"
 #include "messages/outbound_message_builder.h"
+#include "state/orchestrator_state.h"
 #include "thread_util.h"
 
 #include <esp_log.h>
 #include <esp_openthread_types.h>
 #include <portmacro.h>
+#include <cJSON.h>
 
 static const char *TAG = "THREAD_EVENT_HANDLER";
 
@@ -16,11 +18,17 @@ void handle_thread_event(void *arg, const esp_event_base_t event_base, const int
 
     switch (event_id) {
         case OPENTHREAD_EVENT_START:
+            orchestrator_state_set_thread_enabled(true);
+            orchestrator_state_broadcast_event("thread.enabled", nullptr);
             broadcast_info_thread_stack_status_message(true);
+            orchestrator_state_broadcast_snapshot();
             break;
 
         case OPENTHREAD_EVENT_STOP:
+            orchestrator_state_set_thread_enabled(false);
+            orchestrator_state_broadcast_event("thread.disabled", nullptr);
             broadcast_info_thread_stack_status_message(false);
+            orchestrator_state_broadcast_snapshot();
             break;
 
         case OPENTHREAD_EVENT_IF_UP:
@@ -32,17 +40,28 @@ void handle_thread_event(void *arg, const esp_event_base_t event_base, const int
             break;
 
         case OPENTHREAD_EVENT_ATTACHED:
+            orchestrator_state_set_thread_attached(true);
+            orchestrator_state_broadcast_event("thread.attached", nullptr);
             broadcast_info_thread_attachment_status_message(true);
+            orchestrator_state_broadcast_snapshot();
             break;
 
         case OPENTHREAD_EVENT_DETACHED:
+            orchestrator_state_set_thread_attached(false);
+            orchestrator_state_broadcast_event("thread.detached", nullptr);
             broadcast_info_thread_attachment_status_message(false);
+            orchestrator_state_broadcast_snapshot();
             break;
 
-                case OPENTHREAD_EVENT_ROLE_CHANGED: {
+        case OPENTHREAD_EVENT_ROLE_CHANGED: {
             const char *role_str = nullptr;
             if (thread_get_device_role_string(&role_str) == ESP_OK && role_str != nullptr) {
+                orchestrator_state_set_thread_role(role_str);
+                cJSON *payload = cJSON_CreateObject();
+                if (payload) cJSON_AddStringToObject(payload, "role", role_str);
+                orchestrator_state_broadcast_event("thread.role_changed", payload);
                 broadcast_info_thread_role_message(role_str);
+                orchestrator_state_broadcast_snapshot();
             } else {
                 ESP_LOGW(TAG, "Failed to get Thread role string");
             }
@@ -88,6 +107,8 @@ void handle_thread_event(void *arg, const esp_event_base_t event_base, const int
         case OPENTHREAD_EVENT_DATASET_CHANGED: {
             otOperationalDataset dataset;
             if (thread_get_active_dataset(&dataset) == ESP_OK) {
+                orchestrator_state_set_thread_dataset_present(true);
+                orchestrator_state_broadcast_event("thread.dataset_changed", nullptr);
                 broadcast_info_active_dataset_message(
                     dataset.mActiveTimestamp.mSeconds,
                     (const char *)dataset.mNetworkName.m8,
@@ -96,6 +117,7 @@ void handle_thread_event(void *arg, const esp_event_base_t event_base, const int
                     dataset.mPanId,
                     dataset.mChannel
                 );
+                orchestrator_state_broadcast_snapshot();
             } else {
                 ESP_LOGW(TAG, "Failed to get active dataset");
             }
