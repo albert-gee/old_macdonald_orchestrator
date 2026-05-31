@@ -1,5 +1,7 @@
 #include "state/orchestrator_state.h"
 
+#include "control/temperature_control.h"
+#include "registry/device_registry.h"
 #include "websocket_server.h"
 
 #include <cstring>
@@ -153,6 +155,14 @@ static cJSON *snapshot_to_json(const OrchestratorState &snapshot) {
 
     cJSON *websocket = cJSON_AddObjectToObject(root, "websocket");
     cJSON_AddNumberToObject(websocket, "clients", snapshot.websocket.client_count);
+
+    cJSON *registry = device_registry_to_json();
+    cJSON *devices = registry ? cJSON_DetachItemFromObject(registry, "devices") : nullptr;
+    if (devices) cJSON_AddItemToObject(root, "devices", devices);
+    else cJSON_AddItemToObject(root, "devices", cJSON_CreateArray());
+    cJSON_Delete(registry);
+
+    temperature_control_add_snapshot_fields(root);
 
     return root;
 }

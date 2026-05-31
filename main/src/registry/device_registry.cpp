@@ -43,7 +43,7 @@ const char *device_registry_semantic_type_to_string(DeviceCapabilitySemanticType
     switch (semantic_type) {
         case DEVICE_CAPABILITY_TEMPERATURE: return "temperature";
         case DEVICE_CAPABILITY_PRESSURE: return "pressure";
-        case DEVICE_CAPABILITY_RELAY: return "relay";
+        case DEVICE_CAPABILITY_RELAY: return "on_off";
         case DEVICE_CAPABILITY_RAW_ATTRIBUTE: return "raw_attribute";
         case DEVICE_CAPABILITY_RAW_COMMAND: return "raw_command";
         default: return "raw_attribute";
@@ -54,7 +54,7 @@ bool device_registry_semantic_type_from_string(const char *semantic_type, Device
     if (!semantic_type || !out) return false;
     if (strcmp(semantic_type, "temperature") == 0) *out = DEVICE_CAPABILITY_TEMPERATURE;
     else if (strcmp(semantic_type, "pressure") == 0) *out = DEVICE_CAPABILITY_PRESSURE;
-    else if (strcmp(semantic_type, "relay") == 0) *out = DEVICE_CAPABILITY_RELAY;
+    else if (strcmp(semantic_type, "relay") == 0 || strcmp(semantic_type, "on_off") == 0) *out = DEVICE_CAPABILITY_RELAY;
     else if (strcmp(semantic_type, "raw_attribute") == 0) *out = DEVICE_CAPABILITY_RAW_ATTRIBUTE;
     else if (strcmp(semantic_type, "raw_command") == 0) *out = DEVICE_CAPABILITY_RAW_COMMAND;
     else return false;

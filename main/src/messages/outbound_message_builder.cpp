@@ -1,4 +1,5 @@
 #include "messages/outbound_message_builder.h"
+#include "control/temperature_control.h"
 #include "registry/device_registry.h"
 #include "websocket_server.h"
 
@@ -248,6 +249,7 @@ esp_err_t broadcast_info_matter_attribute_report_message(
     if (device_registry_find_capability_by_path(nodeId, endpointId, clusterId, attributeId,
                                                 &record, &capability) == ESP_OK) {
         cJSON_AddStringToObject(payload, "device_id", record.device_id);
+        cJSON_AddStringToObject(payload, "capability_id", capability.capability_id);
         cJSON_AddStringToObject(payload, "semantic_type",
                                 device_registry_semantic_type_to_string(capability.semantic_type));
         const int raw_value = value ? atoi(value) : 0;
@@ -265,6 +267,8 @@ esp_err_t broadcast_info_matter_attribute_report_message(
     cJSON_AddNumberToObject(payload, "cluster_id", clusterId);
     cJSON_AddNumberToObject(payload, "attribute_id", attributeId);
     cJSON_AddStringToObject(payload, "value", value ? value : "");
+
+    temperature_control_handle_attribute_report(nodeId, endpointId, clusterId, attributeId, value);
 
     return broadcast_message("event", "matter.attribute_report", payload);
 }

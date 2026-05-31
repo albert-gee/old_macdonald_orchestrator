@@ -3,6 +3,7 @@
 #include "commands/matter_commands.h"
 #include "commands/thread_commands.h"
 #include "commands/wifi_commands.h"
+#include "control/temperature_control.h"
 #include "messages/outbound_message_builder.h"
 #include "registry/device_registry.h"
 #include "sdkconfig.h"
@@ -211,6 +212,25 @@ static bool add_accepted_payload_field(cJSON *payload, const char *device_id, co
     return cJSON_AddStringToObject(payload, "device_id", device_id) &&
            cJSON_AddBoolToObject(payload, "accepted", true) &&
            cJSON_AddStringToObject(payload, "result_delivery", delivery);
+}
+
+static esp_err_t find_capability_by_id(const char *device_id,
+                                       const char *capability_id,
+                                       DeviceCapabilitySemanticType semantic,
+                                       DeviceRecord *record,
+                                       DeviceCapability *capability) {
+    if (!device_id || !capability_id || !capability) return ESP_ERR_INVALID_ARG;
+    DeviceRecord found = {};
+    ESP_RETURN_ON_ERROR(device_registry_get_device(device_id, &found), TAG, "device not found");
+    for (uint32_t i = 0; i < found.capability_count; ++i) {
+        if (found.capabilities[i].semantic_type == semantic &&
+            strncmp(found.capabilities[i].capability_id, capability_id, DEVICE_REGISTRY_ID_MAX) == 0) {
+            if (record) *record = found;
+            *capability = found.capabilities[i];
+            return ESP_OK;
+        }
+    }
+    return ESP_ERR_NOT_FOUND;
 }
 
 static CommandExecutionResult accepted_device_payload(const char *device_id) {
@@ -465,6 +485,59 @@ static CommandExecutionResult process_command_message(const char *action, const 
         return command_result(ESP_OK, out);
     }
 
+    if (strcmp(action, "chamber.assignment.set") == 0 ||
+        strcmp(action, "control.temperature.upsert") == 0) {
+        const cJSON *rule_id = optional_string_field(payload, "rule_id");
+        const cJSON *chamber_id = optional_string_field(payload, "chamber_id");
+        const cJSON *enabled = cJSON_GetObjectItem(payload, "enabled");
+        const cJSON *sensor = cJSON_GetObjectItem(payload, "sensor");
+        const cJSON *actuator = cJSON_GetObjectItem(payload, "actuator");
+        const cJSON *min = required_number_field(payload, "min_celsius");
+        const cJSON *max = required_number_field(payload, "max_celsius");
+        const cJSON *mode = optional_string_field(payload, "mode");
+        if (!cJSON_IsObject(sensor) || !cJSON_IsObject(actuator) || !min || !max ||
+            (mode && strcmp(mode->valuestring, "cooling") != 0)) {
+            return command_result(ESP_ERR_INVALID_ARG, nullptr, "Invalid temperature control payload");
+        }
+        const cJSON *sensor_device = required_string_field(sensor, "device_id");
+        const cJSON *sensor_cap = required_string_field(sensor, "capability_id");
+        const cJSON *actuator_device = required_string_field(actuator, "device_id");
+        const cJSON *actuator_cap = required_string_field(actuator, "capability_id");
+        if (!sensor_device || !sensor_cap || !actuator_device || !actuator_cap) {
+            return command_result(ESP_ERR_INVALID_ARG, nullptr, "Invalid temperature control capability references");
+        }
+        esp_err_t err = temperature_control_upsert_rule(rule_id ? rule_id->valuestring : "main-air-temperature-fan",
+                                                       chamber_id ? chamber_id->valuestring : "main",
+                                                       cJSON_IsBool(enabled) ? cJSON_IsTrue(enabled) : true,
+                                                       sensor_device->valuestring,
+                                                       sensor_cap->valuestring,
+                                                       actuator_device->valuestring,
+                                                       actuator_cap->valuestring,
+                                                       min->valuedouble,
+                                                       max->valuedouble);
+        if (err != ESP_OK) return command_result(err, nullptr, "Temperature control rule rejected");
+        cJSON *out = nullptr;
+        if (temperature_control_get_rule(&out) != ESP_OK) return command_result(ESP_ERR_NO_MEM);
+        return command_result(ESP_OK, out);
+    }
+
+    if (strcmp(action, "control.temperature.get") == 0) {
+        cJSON *out = nullptr;
+        esp_err_t err = temperature_control_get_rule(&out);
+        return command_result(err, out);
+    }
+
+    if (strcmp(action, "control.temperature.set_enabled") == 0) {
+        const cJSON *enabled = cJSON_GetObjectItem(payload, "enabled");
+        if (!cJSON_IsBool(enabled)) return command_result(ESP_ERR_INVALID_ARG, nullptr, "Missing enabled boolean");
+        return command_result(temperature_control_set_enabled(cJSON_IsTrue(enabled)));
+    }
+
+    if (strcmp(action, "control.temperature.delete") == 0 ||
+        strcmp(action, "chamber.assignment.clear") == 0) {
+        return command_result(temperature_control_delete_rule());
+    }
+
     if (strcmp(action, "device.list") == 0) {
         cJSON *out = device_registry_to_json();
         if (!out) return command_result(ESP_ERR_NO_MEM, nullptr, "Failed to build device registry payload");
@@ -549,11 +622,14 @@ static CommandExecutionResult process_command_message(const char *action, const 
 
     if (strcmp(action, "device.relay.set") == 0) {
         const cJSON *device_id = required_string_field(payload, "device_id");
+        const cJSON *capability_id = optional_string_field(payload, "capability_id");
         const cJSON *on = cJSON_GetObjectItem(payload, "on");
         if (!device_id || !cJSON_IsBool(on)) return command_result(ESP_ERR_INVALID_ARG, nullptr, "Invalid relay payload");
         DeviceRecord record = {};
         DeviceCapability capability = {};
-        esp_err_t err = device_registry_find_capability(device_id->valuestring, DEVICE_CAPABILITY_RELAY, &record, &capability);
+        esp_err_t err = capability_id
+            ? find_capability_by_id(device_id->valuestring, capability_id->valuestring, DEVICE_CAPABILITY_RELAY, &record, &capability)
+            : device_registry_find_capability(device_id->valuestring, DEVICE_CAPABILITY_RELAY, &record, &capability);
         if (err != ESP_OK) return command_result(err, nullptr, "Device does not have a relay capability");
         err = execute_cmd_invoke_command(record.node_id, capability.endpoint_id, capability.cluster_id,
                                          cJSON_IsTrue(on) ? 0x01 : 0x00, "{}");
@@ -561,6 +637,7 @@ static CommandExecutionResult process_command_message(const char *action, const 
         cJSON *out = cJSON_CreateObject();
         if (!out) return command_result(ESP_ERR_NO_MEM, nullptr, "Failed to build relay payload");
         cJSON_AddStringToObject(out, "device_id", device_id->valuestring);
+        cJSON_AddStringToObject(out, "capability_id", capability.capability_id);
         cJSON_AddBoolToObject(out, "accepted", true);
         cJSON_AddBoolToObject(out, "on", cJSON_IsTrue(on));
         return command_result(ESP_OK, out);
