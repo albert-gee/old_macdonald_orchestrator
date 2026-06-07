@@ -1,5 +1,6 @@
 #include "commands/matter_commands.h"
 
+#include "control/temperature_control.h"
 #include "matter_interface.h"
 #include "matter_controller.h"
 #include "registry/device_registry.h"
@@ -8,9 +9,12 @@
 
 #include <cstring>
 #include <cstdio>
+#include <esp_log.h>
 #include <inttypes.h>
 
 #include "event_handlers/chip_event_handler.h"
+
+static constexpr const char *TAG = "MATTER_COMMANDS";
 
 esp_err_t execute_matter_pair_ble_thread_command(const uint64_t node_id, const uint32_t pin,
                                               const uint16_t discriminator) {
@@ -60,6 +64,10 @@ esp_err_t execute_matter_controller_init_command(const uint64_t node_id, const u
     esp_err_t err = matter_controller_init(node_id, fabric_id, listen_port, attribute_data_report_callback, subscribe_done_callback);
     if (err == ESP_OK) {
         orchestrator_state_set_matter_controller_initialized(true);
+        esp_err_t resume_err = temperature_control_resume_after_matter_controller_init();
+        if (resume_err != ESP_OK) {
+            ESP_LOGW(TAG, "Temperature control resume failed: %s", esp_err_to_name(resume_err));
+        }
         orchestrator_state_broadcast_event("matter.controller_initialized", nullptr);
         orchestrator_state_broadcast_snapshot();
     }

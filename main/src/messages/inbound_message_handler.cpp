@@ -592,12 +592,15 @@ static CommandExecutionResult process_command_message(const char *action, const 
         strcmp(action, "device.pressure.read") == 0) {
         const cJSON *device_id = required_string_field(payload, "device_id");
         if (!device_id) return command_result(ESP_ERR_INVALID_ARG, nullptr, "Missing device_id");
+        const cJSON *capability_id = optional_string_field(payload, "capability_id");
         const DeviceCapabilitySemanticType semantic = strcmp(action, "device.temperature.read") == 0
             ? DEVICE_CAPABILITY_TEMPERATURE
             : DEVICE_CAPABILITY_PRESSURE;
         DeviceRecord record = {};
         DeviceCapability capability = {};
-        esp_err_t err = device_registry_find_capability(device_id->valuestring, semantic, &record, &capability);
+        esp_err_t err = capability_id
+            ? find_capability_by_id(device_id->valuestring, capability_id->valuestring, semantic, &record, &capability)
+            : device_registry_find_capability(device_id->valuestring, semantic, &record, &capability);
         if (err != ESP_OK) return command_result(err, nullptr, "Device does not have the required capability");
         err = execute_attr_read_command(record.node_id, capability.endpoint_id, capability.cluster_id, capability.attribute_id);
         if (err != ESP_OK) return command_result(err);

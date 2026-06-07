@@ -150,8 +150,9 @@ static cJSON *snapshot_to_json(const OrchestratorState &snapshot) {
 
     cJSON *matter = cJSON_AddObjectToObject(root, "matter");
     cJSON_AddBoolToObject(matter, "controller_initialized", snapshot.matter.controller_initialized);
-    cJSON *nodes = cJSON_AddArrayToObject(matter, "commissioned_nodes");
-    (void)nodes;
+    cJSON *nodes = device_registry_commissioned_nodes_to_json();
+    if (nodes) cJSON_AddItemToObject(matter, "commissioned_nodes", nodes);
+    else cJSON_AddItemToObject(matter, "commissioned_nodes", cJSON_CreateArray());
 
     cJSON *websocket = cJSON_AddObjectToObject(root, "websocket");
     cJSON_AddNumberToObject(websocket, "clients", snapshot.websocket.client_count);

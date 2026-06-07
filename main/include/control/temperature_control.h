@@ -33,6 +33,7 @@ esp_err_t temperature_control_handle_attribute_report(uint64_t node_id,
                                                       uint32_t cluster_id,
                                                       uint32_t attribute_id,
                                                       const char *value);
+esp_err_t temperature_control_resume_after_matter_controller_init(void);
 esp_err_t temperature_control_add_snapshot_fields(cJSON *root);
 
 #ifdef __cplusplus

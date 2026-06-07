@@ -8,6 +8,9 @@
 #include <cstdio>
 #include <esp_check.h>
 #include <esp_log.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include <freertos/task.h>
 #include <inttypes.h>
 
 static constexpr const char *TAG = "MATTER_DISCOVERY";
@@ -28,6 +31,33 @@ static constexpr uint32_t ATTR_VENDOR_ID = 0x0002;
 static constexpr uint32_t ATTR_PRODUCT_NAME = 0x0003;
 static constexpr uint32_t ATTR_PRODUCT_ID = 0x0004;
 static constexpr uint32_t ATTR_NODE_LABEL = 0x0005;
+static constexpr uint32_t DISCOVERY_QUEUE_LENGTH = 8;
+static constexpr uint32_t DISCOVERY_TASK_STACK_SIZE = 6144;
+static constexpr UBaseType_t DISCOVERY_TASK_PRIORITY = 5;
+
+enum class DiscoveryWorkType : uint8_t {
+    BasicUint,
+    BasicString,
+    PartsList,
+    ServerList,
+};
+
+struct DiscoveryWork {
+    DiscoveryWorkType type;
+    uint64_t node_id;
+    uint16_t endpoint_id;
+    uint32_t attribute_id;
+    uint64_t uint_value;
+    char string_value[DEVICE_REGISTRY_PRODUCT_MAX];
+    uint32_t values[DEVICE_REGISTRY_CAPABILITY_MAX * 2];
+    uint32_t value_count;
+};
+
+static QueueHandle_t discovery_queue = nullptr;
+static TaskHandle_t discovery_task_handle = nullptr;
+
+static esp_err_t ensure_discovery_worker(void);
+static void queue_discovery_work(const DiscoveryWork &work);
 
 static void copy_field(char *dest, const char *src, size_t len) {
     if (!dest || len == 0) return;
@@ -96,10 +126,8 @@ static esp_err_t append_capability(DeviceRecord *record,
 
     DeviceCapability &capability = record->capabilities[record->capability_count++];
     memset(&capability, 0, sizeof(capability));
-    char device_id[DEVICE_REGISTRY_ID_MAX] = {};
-    copy_field(device_id, record->device_id, sizeof(device_id));
-    snprintf(capability.capability_id, sizeof(capability.capability_id), "%s-ep%u-%s",
-             device_id, endpoint_id, suffix);
+    snprintf(capability.capability_id, sizeof(capability.capability_id), "ep%u-%s",
+             endpoint_id, suffix);
     capability.semantic_type = semantic_type;
     capability.endpoint_id = endpoint_id;
     capability.cluster_id = cluster_id;
@@ -137,26 +165,38 @@ static esp_err_t apply_server_list(uint64_t node_id, uint16_t endpoint_id, const
     return ESP_OK;
 }
 
-static void update_basic_information(uint64_t node_id,
-                                     uint32_t attribute_id,
-                                     chip::TLV::TLVReader &reader) {
+static void update_basic_information_uint(uint64_t node_id,
+                                          uint32_t attribute_id,
+                                          uint64_t value) {
     DeviceRecord record = {};
     if (device_registry_get_device_by_node_id(node_id, &record) != ESP_OK) return;
 
     bool changed = false;
-    uint64_t uint_value = 0;
-    char string_value[DEVICE_REGISTRY_PRODUCT_MAX] = {};
-    if (attribute_id == ATTR_VENDOR_ID && read_uint(reader, &uint_value)) {
-        record.vendor_id = static_cast<uint32_t>(uint_value);
+    if (attribute_id == ATTR_VENDOR_ID && value <= UINT32_MAX) {
+        record.vendor_id = static_cast<uint32_t>(value);
         changed = true;
-    } else if (attribute_id == ATTR_PRODUCT_ID && read_uint(reader, &uint_value)) {
-        record.product_id = static_cast<uint32_t>(uint_value);
+    } else if (attribute_id == ATTR_PRODUCT_ID && value <= UINT32_MAX) {
+        record.product_id = static_cast<uint32_t>(value);
         changed = true;
-    } else if (attribute_id == ATTR_PRODUCT_NAME && read_string(reader, string_value, sizeof(string_value))) {
-        copy_field(record.product_name, string_value, sizeof(record.product_name));
+    }
+
+    if (changed) {
+        device_registry_upsert_device(&record);
+    }
+}
+
+static void update_basic_information_string(uint64_t node_id,
+                                            uint32_t attribute_id,
+                                            const char *value) {
+    DeviceRecord record = {};
+    if (device_registry_get_device_by_node_id(node_id, &record) != ESP_OK) return;
+
+    bool changed = false;
+    if (attribute_id == ATTR_PRODUCT_NAME) {
+        copy_field(record.product_name, value, sizeof(record.product_name));
         changed = true;
-    } else if (attribute_id == ATTR_NODE_LABEL && read_string(reader, string_value, sizeof(string_value))) {
-        copy_field(record.label, string_value, sizeof(record.label));
+    } else if (attribute_id == ATTR_NODE_LABEL) {
+        copy_field(record.label, value, sizeof(record.label));
         changed = true;
     }
 
@@ -166,6 +206,8 @@ static void update_basic_information(uint64_t node_id,
 }
 
 esp_err_t matter_discovery_refresh_device(const char *device_id) {
+    ESP_RETURN_ON_ERROR(ensure_discovery_worker(), TAG, "discovery worker init failed");
+
     DeviceRecord record = {};
     ESP_RETURN_ON_ERROR(device_registry_get_device(device_id, &record), TAG, "device not found");
     ESP_LOGI(TAG, "Starting discovery for %s / node %" PRIu64, device_id, record.node_id);
@@ -179,6 +221,68 @@ esp_err_t matter_discovery_refresh_device(const char *device_id) {
     return ESP_OK;
 }
 
+static void process_discovery_work(const DiscoveryWork &work) {
+    switch (work.type) {
+        case DiscoveryWorkType::BasicUint:
+            update_basic_information_uint(work.node_id, work.attribute_id, work.uint_value);
+            return;
+
+        case DiscoveryWorkType::BasicString:
+            update_basic_information_string(work.node_id, work.attribute_id, work.string_value);
+            return;
+
+        case DiscoveryWorkType::PartsList:
+            ESP_LOGI(TAG, "Descriptor PartsList for node %" PRIu64 " has %" PRIu32 " endpoint(s)",
+                     work.node_id, work.value_count);
+            for (uint32_t i = 0; i < work.value_count; ++i) {
+                const uint16_t endpoint_id = static_cast<uint16_t>(work.values[i]);
+                execute_attr_read_command(work.node_id, endpoint_id, CLUSTER_DESCRIPTOR, ATTR_SERVER_LIST);
+                execute_attr_read_command(work.node_id, endpoint_id, CLUSTER_DESCRIPTOR, ATTR_CLIENT_LIST);
+                execute_attr_read_command(work.node_id, endpoint_id, CLUSTER_DESCRIPTOR, ATTR_DEVICE_TYPE_LIST);
+            }
+            return;
+
+        case DiscoveryWorkType::ServerList:
+            if (work.value_count > 0) {
+                apply_server_list(work.node_id, work.endpoint_id, work.values, work.value_count);
+            }
+            return;
+    }
+}
+
+static void discovery_task(void *) {
+    while (true) {
+        DiscoveryWork work = {};
+        if (xQueueReceive(discovery_queue, &work, portMAX_DELAY) == pdTRUE) {
+            process_discovery_work(work);
+        }
+    }
+}
+
+static esp_err_t ensure_discovery_worker(void) {
+    if (!discovery_queue) {
+        discovery_queue = xQueueCreate(DISCOVERY_QUEUE_LENGTH, sizeof(DiscoveryWork));
+        if (!discovery_queue) return ESP_ERR_NO_MEM;
+    }
+    if (!discovery_task_handle) {
+        if (xTaskCreate(discovery_task, "matter_discovery", DISCOVERY_TASK_STACK_SIZE, nullptr,
+                        DISCOVERY_TASK_PRIORITY, &discovery_task_handle) != pdPASS) {
+            return ESP_ERR_NO_MEM;
+        }
+    }
+    return ESP_OK;
+}
+
+static void queue_discovery_work(const DiscoveryWork &work) {
+    if (ensure_discovery_worker() != ESP_OK) {
+        ESP_LOGW(TAG, "Discovery worker unavailable");
+        return;
+    }
+    if (xQueueSend(discovery_queue, &work, 0) != pdTRUE) {
+        ESP_LOGW(TAG, "Discovery queue full; dropping work item");
+    }
+}
+
 void matter_discovery_handle_attribute_report(uint64_t node_id,
                                               const chip::app::ConcreteDataAttributePath &path,
                                               chip::TLV::TLVReader *data) {
@@ -186,29 +290,46 @@ void matter_discovery_handle_attribute_report(uint64_t node_id,
 
     chip::TLV::TLVReader reader = *data;
     if (path.mClusterId == CLUSTER_BASIC_INFORMATION && path.mEndpointId == 0) {
-        update_basic_information(node_id, path.mAttributeId, reader);
+        DiscoveryWork work = {};
+        work.node_id = node_id;
+        work.endpoint_id = path.mEndpointId;
+        work.attribute_id = path.mAttributeId;
+        if (path.mAttributeId == ATTR_VENDOR_ID || path.mAttributeId == ATTR_PRODUCT_ID) {
+            uint64_t value = 0;
+            if (read_uint(reader, &value)) {
+                work.type = DiscoveryWorkType::BasicUint;
+                work.uint_value = value;
+                queue_discovery_work(work);
+            }
+        } else if (path.mAttributeId == ATTR_PRODUCT_NAME || path.mAttributeId == ATTR_NODE_LABEL) {
+            if (read_string(reader, work.string_value, sizeof(work.string_value))) {
+                work.type = DiscoveryWorkType::BasicString;
+                queue_discovery_work(work);
+            }
+        }
         return;
     }
 
     if (path.mClusterId != CLUSTER_DESCRIPTOR) return;
 
     if (path.mEndpointId == 0 && path.mAttributeId == ATTR_PARTS_LIST) {
-        uint32_t endpoints[DEVICE_REGISTRY_CAPABILITY_MAX] = {};
-        const uint32_t count = parse_uint_list(reader, endpoints, DEVICE_REGISTRY_CAPABILITY_MAX);
-        ESP_LOGI(TAG, "Descriptor PartsList for node %" PRIu64 " has %" PRIu32 " endpoint(s)", node_id, count);
-        for (uint32_t i = 0; i < count; ++i) {
-            execute_attr_read_command(node_id, static_cast<uint16_t>(endpoints[i]), CLUSTER_DESCRIPTOR, ATTR_SERVER_LIST);
-            execute_attr_read_command(node_id, static_cast<uint16_t>(endpoints[i]), CLUSTER_DESCRIPTOR, ATTR_CLIENT_LIST);
-            execute_attr_read_command(node_id, static_cast<uint16_t>(endpoints[i]), CLUSTER_DESCRIPTOR, ATTR_DEVICE_TYPE_LIST);
-        }
+        DiscoveryWork work = {};
+        work.type = DiscoveryWorkType::PartsList;
+        work.node_id = node_id;
+        work.endpoint_id = path.mEndpointId;
+        work.attribute_id = path.mAttributeId;
+        work.value_count = parse_uint_list(reader, work.values, DEVICE_REGISTRY_CAPABILITY_MAX);
+        queue_discovery_work(work);
         return;
     }
 
     if (path.mAttributeId == ATTR_SERVER_LIST) {
-        uint32_t clusters[DEVICE_REGISTRY_CAPABILITY_MAX * 2] = {};
-        const uint32_t count = parse_uint_list(reader, clusters, DEVICE_REGISTRY_CAPABILITY_MAX * 2);
-        if (count > 0) {
-            apply_server_list(node_id, path.mEndpointId, clusters, count);
-        }
+        DiscoveryWork work = {};
+        work.type = DiscoveryWorkType::ServerList;
+        work.node_id = node_id;
+        work.endpoint_id = path.mEndpointId;
+        work.attribute_id = path.mAttributeId;
+        work.value_count = parse_uint_list(reader, work.values, DEVICE_REGISTRY_CAPABILITY_MAX * 2);
+        if (work.value_count > 0) queue_discovery_work(work);
     }
 }

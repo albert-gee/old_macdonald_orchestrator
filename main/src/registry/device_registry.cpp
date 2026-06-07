@@ -372,3 +372,37 @@ cJSON *device_registry_to_json(void) {
     free(store);
     return payload;
 }
+
+cJSON *device_registry_commissioned_nodes_to_json(void) {
+    RegistryStore *store = alloc_store();
+    if (!store) return nullptr;
+    if (load_store(store) != ESP_OK) {
+        free(store);
+        return nullptr;
+    }
+
+    cJSON *nodes = cJSON_CreateArray();
+    if (!nodes) {
+        free(store);
+        return nullptr;
+    }
+
+    for (uint32_t i = 0; i < store->count; ++i) {
+        cJSON *item = cJSON_CreateObject();
+        if (!item) {
+            cJSON_Delete(nodes);
+            free(store);
+            return nullptr;
+        }
+        char node_id[24];
+        snprintf(node_id, sizeof(node_id), "%" PRIu64, store->records[i].node_id);
+        cJSON_AddStringToObject(item, "device_id", store->records[i].device_id);
+        cJSON_AddStringToObject(item, "node_id", node_id);
+        cJSON_AddStringToObject(item, "label", store->records[i].label);
+        cJSON_AddBoolToObject(item, "reachable", store->records[i].reachable);
+        cJSON_AddItemToArray(nodes, item);
+    }
+
+    free(store);
+    return nodes;
+}

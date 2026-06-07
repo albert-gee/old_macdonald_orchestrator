@@ -65,6 +65,7 @@ esp_err_t device_registry_find_capability_by_path(uint64_t node_id,
 const char *device_registry_semantic_type_to_string(DeviceCapabilitySemanticType semantic_type);
 bool device_registry_semantic_type_from_string(const char *semantic_type, DeviceCapabilitySemanticType *out);
 cJSON *device_registry_to_json(void);
+cJSON *device_registry_commissioned_nodes_to_json(void);
 
 #ifdef __cplusplus
 }
