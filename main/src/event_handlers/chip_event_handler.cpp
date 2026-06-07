@@ -157,7 +157,7 @@ void attribute_data_report_callback(uint64_t remote_node_id, const chip::app::Co
         return;
     }
 
-    broadcast_info_matter_attribute_report_message(
+    enqueue_matter_attribute_report_message(
         remote_node_id,
         path.mEndpointId,
         path.mClusterId,

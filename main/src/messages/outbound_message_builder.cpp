@@ -5,6 +5,10 @@
 
 #include <esp_log.h>
 #include <esp_err.h>
+#include <esp_check.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include <freertos/task.h>
 #include <cJSON.h>
 #include <cstdio>
 #include <cstring>
@@ -12,6 +16,26 @@
 #include <inttypes.h>
 
 static const char *TAG = "JSON_OUTBOUND";
+static constexpr uint32_t MATTER_REPORT_QUEUE_LENGTH = 8;
+static constexpr uint32_t MATTER_REPORT_TASK_STACK_SIZE = 6144;
+static constexpr UBaseType_t MATTER_REPORT_TASK_PRIORITY = 5;
+
+struct MatterAttributeReportWork {
+    uint64_t node_id;
+    uint16_t endpoint_id;
+    uint32_t cluster_id;
+    uint32_t attribute_id;
+    char value[256];
+};
+
+static QueueHandle_t matter_report_queue = nullptr;
+static TaskHandle_t matter_report_task_handle = nullptr;
+
+static esp_err_t ensure_matter_report_worker(void);
+
+esp_err_t outbound_message_builder_init(void) {
+    return ensure_matter_report_worker();
+}
 
 /**
  * Builds a JSON message string with the given type, action, and payload.
@@ -231,7 +255,7 @@ esp_err_t broadcast_info_matter_commissioning_complete_message(const uint64_t no
     return broadcast_message("info", "matter.commissioning_complete", payload);
 }
 
-esp_err_t broadcast_info_matter_attribute_report_message(
+static esp_err_t broadcast_matter_attribute_report_now(
     const uint64_t nodeId,
     const uint16_t endpointId,
     const uint32_t clusterId,
@@ -271,6 +295,54 @@ esp_err_t broadcast_info_matter_attribute_report_message(
     temperature_control_handle_attribute_report(nodeId, endpointId, clusterId, attributeId, value);
 
     return broadcast_message("event", "matter.attribute_report", payload);
+}
+
+static void matter_report_task(void *) {
+    while (true) {
+        MatterAttributeReportWork work = {};
+        if (xQueueReceive(matter_report_queue, &work, portMAX_DELAY) == pdTRUE) {
+            broadcast_matter_attribute_report_now(work.node_id, work.endpoint_id, work.cluster_id,
+                                                  work.attribute_id, work.value);
+        }
+    }
+}
+
+static esp_err_t ensure_matter_report_worker(void) {
+    if (!matter_report_queue) {
+        matter_report_queue = xQueueCreate(MATTER_REPORT_QUEUE_LENGTH, sizeof(MatterAttributeReportWork));
+        if (!matter_report_queue) return ESP_ERR_NO_MEM;
+    }
+    if (!matter_report_task_handle) {
+        if (xTaskCreate(matter_report_task, "matter_reports", MATTER_REPORT_TASK_STACK_SIZE, nullptr,
+                        MATTER_REPORT_TASK_PRIORITY, &matter_report_task_handle) != pdPASS) {
+            return ESP_ERR_NO_MEM;
+        }
+    }
+    return ESP_OK;
+}
+
+esp_err_t enqueue_matter_attribute_report_message(
+    const uint64_t nodeId,
+    const uint16_t endpointId,
+    const uint32_t clusterId,
+    const uint32_t attributeId,
+    const char *value
+) {
+    if (!value) return ESP_ERR_INVALID_ARG;
+    ESP_RETURN_ON_ERROR(ensure_matter_report_worker(), TAG, "matter report worker init failed");
+
+    MatterAttributeReportWork work = {};
+    work.node_id = nodeId;
+    work.endpoint_id = endpointId;
+    work.cluster_id = clusterId;
+    work.attribute_id = attributeId;
+    strncpy(work.value, value, sizeof(work.value) - 1);
+
+    if (xQueueSend(matter_report_queue, &work, 0) != pdTRUE) {
+        ESP_LOGW(TAG, "Matter report queue full; dropping attribute report");
+        return ESP_ERR_NO_MEM;
+    }
+    return ESP_OK;
 }
 
 esp_err_t broadcast_info_matter_subscribe_done_message(const uint64_t nodeId, const uint32_t subscription_id) {

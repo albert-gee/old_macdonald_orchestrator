@@ -27,16 +27,24 @@ struct CommandExecutionResult {
     esp_err_t err;
     cJSON *payload;
     bool unknown_action;
+    char error_code[64];
     char error_message[128];
 };
 
-static CommandExecutionResult command_result(esp_err_t err, cJSON *payload = nullptr, const char *message = nullptr) {
+static CommandExecutionResult command_result(esp_err_t err,
+                                             cJSON *payload = nullptr,
+                                             const char *message = nullptr,
+                                             const char *code = nullptr) {
     CommandExecutionResult result = {
         .err = err,
         .payload = payload,
         .unknown_action = false,
+        .error_code = {},
         .error_message = {}
     };
+    if (code) {
+        strncpy(result.error_code, code, sizeof(result.error_code) - 1);
+    }
     if (message) {
         strncpy(result.error_message, message, sizeof(result.error_message) - 1);
     }
@@ -163,6 +171,7 @@ static esp_err_t send_protocol_error(const int client_fd, const char *code, cons
 
 static const char *error_code_for_result(const CommandExecutionResult &result) {
     if (result.unknown_action) return "UNKNOWN_ACTION";
+    if (result.error_code[0]) return result.error_code;
     return esp_err_to_name(result.err);
 }
 
@@ -232,6 +241,51 @@ static esp_err_t find_capability_by_id(const char *device_id,
         }
     }
     return ESP_ERR_NOT_FOUND;
+}
+
+static esp_err_t find_single_capability_by_semantic(const char *device_id,
+                                                    DeviceCapabilitySemanticType semantic,
+                                                    DeviceRecord *record,
+                                                    DeviceCapability *capability,
+                                                    bool *ambiguous) {
+    if (!device_id || !capability) return ESP_ERR_INVALID_ARG;
+    if (ambiguous) *ambiguous = false;
+
+    DeviceRecord found = {};
+    ESP_RETURN_ON_ERROR(device_registry_get_device(device_id, &found), TAG, "device not found");
+
+    uint32_t match_count = 0;
+    DeviceCapability only_match = {};
+    for (uint32_t i = 0; i < found.capability_count; ++i) {
+        if (found.capabilities[i].semantic_type == semantic) {
+            only_match = found.capabilities[i];
+            ++match_count;
+        }
+    }
+
+    if (match_count == 0) return ESP_ERR_NOT_FOUND;
+    if (match_count > 1) {
+        if (ambiguous) *ambiguous = true;
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (record) *record = found;
+    *capability = only_match;
+    return ESP_OK;
+}
+
+static CommandExecutionResult capability_lookup_result(esp_err_t err, bool ambiguous) {
+    if (ambiguous) {
+        return command_result(ESP_ERR_INVALID_STATE, nullptr,
+                              "Multiple matching capabilities; provide capability_id",
+                              "CAPABILITY_AMBIGUOUS");
+    }
+    if (err == ESP_ERR_NOT_FOUND) {
+        return command_result(ESP_ERR_NOT_FOUND, nullptr,
+                              "Capability not found",
+                              "CAPABILITY_NOT_FOUND");
+    }
+    return command_result(err, nullptr, "Capability lookup failed");
 }
 
 static CommandExecutionResult accepted_device_payload(const char *device_id) {
@@ -598,10 +652,11 @@ static CommandExecutionResult process_command_message(const char *action, const 
             : DEVICE_CAPABILITY_PRESSURE;
         DeviceRecord record = {};
         DeviceCapability capability = {};
+        bool ambiguous = false;
         esp_err_t err = capability_id
             ? find_capability_by_id(device_id->valuestring, capability_id->valuestring, semantic, &record, &capability)
-            : device_registry_find_capability(device_id->valuestring, semantic, &record, &capability);
-        if (err != ESP_OK) return command_result(err, nullptr, "Device does not have the required capability");
+            : find_single_capability_by_semantic(device_id->valuestring, semantic, &record, &capability, &ambiguous);
+        if (err != ESP_OK) return capability_lookup_result(err, ambiguous);
         err = execute_attr_read_command(record.node_id, capability.endpoint_id, capability.cluster_id, capability.attribute_id);
         if (err != ESP_OK) return command_result(err);
         return accepted_device_payload(device_id->valuestring);
@@ -646,10 +701,11 @@ static CommandExecutionResult process_command_message(const char *action, const 
         if (!device_id || !cJSON_IsBool(on)) return command_result(ESP_ERR_INVALID_ARG, nullptr, "Invalid relay payload");
         DeviceRecord record = {};
         DeviceCapability capability = {};
+        bool ambiguous = false;
         esp_err_t err = capability_id
             ? find_capability_by_id(device_id->valuestring, capability_id->valuestring, DEVICE_CAPABILITY_RELAY, &record, &capability)
-            : device_registry_find_capability(device_id->valuestring, DEVICE_CAPABILITY_RELAY, &record, &capability);
-        if (err != ESP_OK) return command_result(err, nullptr, "Device does not have a relay capability");
+            : find_single_capability_by_semantic(device_id->valuestring, DEVICE_CAPABILITY_RELAY, &record, &capability, &ambiguous);
+        if (err != ESP_OK) return capability_lookup_result(err, ambiguous);
         err = execute_cmd_invoke_command(record.node_id, capability.endpoint_id, capability.cluster_id,
                                          cJSON_IsTrue(on) ? 0x01 : 0x00, "{}");
         if (err != ESP_OK) return command_result(err);

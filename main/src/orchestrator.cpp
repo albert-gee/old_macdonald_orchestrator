@@ -2,6 +2,7 @@
 #include "event_handlers/thread_event_handler.h"
 #include "event_handlers/wifi_event_handler.h"
 #include "control/temperature_control.h"
+#include "messages/outbound_message_builder.h"
 #include "thread_interface.h"
 #include "matter_interface.h"
 #include "registry/device_registry.h"
@@ -26,6 +27,9 @@ extern "C" void app_main() {
 
     ESP_LOGI(TAG, "Initializing Orchestrator state");
     ESP_ERROR_CHECK(orchestrator_state_init());
+
+    ESP_LOGI(TAG, "Initializing outbound message workers");
+    ESP_ERROR_CHECK(outbound_message_builder_init());
 
     ESP_LOGI(TAG, "Initializing device registry");
     ESP_ERROR_CHECK(device_registry_init());

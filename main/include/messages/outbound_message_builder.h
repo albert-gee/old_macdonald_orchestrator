@@ -8,6 +8,8 @@
 extern "C" {
 #endif
 
+esp_err_t outbound_message_builder_init(void);
+
 // ---- THREAD ----
 
 /**
@@ -156,22 +158,8 @@ esp_err_t broadcast_info_wifi_status_message(const char *status);
  */
 esp_err_t broadcast_info_matter_commissioning_complete_message(uint64_t nodeId, uint8_t fabricIndex);
 
-/**
- * Broadcasts a message containing a Matter attribute report.
- *
- * This function builds and sends a JSON message including the node ID, endpoint ID,
- * cluster ID, attribute ID, and reported value. It is typically used when receiving
- * attribute report data from a Matter device.
- *
- * @param nodeId The 64-bit Node ID of the device.
- * @param endpointId The 16-bit endpoint ID.
- * @param clusterId The 32-bit cluster ID.
- * @param attributeId The 32-bit attribute ID being reported.
- * @param value The attribute value as a string. Must not be null.
- * @return ESP_OK on success, or ESP_ERR_INVALID_ARG / ESP_FAIL on failure.
-*/
-esp_err_t broadcast_info_matter_attribute_report_message(uint64_t nodeId, uint16_t endpointId, uint32_t clusterId,
-                                                         uint32_t attributeId, const char *value);
+esp_err_t enqueue_matter_attribute_report_message(uint64_t nodeId, uint16_t endpointId, uint32_t clusterId,
+                                                  uint32_t attributeId, const char *value);
 
 /**
  * Broadcasts an information message indicating that a Matter subscription has successfully completed.

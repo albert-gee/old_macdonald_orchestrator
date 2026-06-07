@@ -226,6 +226,8 @@ static esp_err_t emit_event(const char *event, cJSON *payload) {
     return orchestrator_state_broadcast_event(event, payload);
 }
 
+static esp_err_t subscribe_configured_temperature_or_start_fallback(void);
+
 static void set_decision_event(ControlDecision *decision, const char *event, bool broadcast_snapshot = true) {
     if (!decision) return;
     decision->emit_event = true;
@@ -300,8 +302,22 @@ static void record_control_command_result(const ControlWork &work, esp_err_t err
     orchestrator_state_broadcast_snapshot();
 }
 
+static bool control_work_still_current(const ControlWork &work) {
+    xSemaphoreTake(mutex, portMAX_DELAY);
+    const bool current = rule.configured && rule.enabled &&
+        strncmp(work.rule_id, rule.rule_id, DEVICE_REGISTRY_ID_MAX) == 0 &&
+        strncmp(work.actuator_device_id, rule.actuator_device_id, DEVICE_REGISTRY_ID_MAX) == 0 &&
+        strncmp(work.actuator_capability_id, rule.actuator_capability_id, DEVICE_REGISTRY_ID_MAX) == 0;
+    xSemaphoreGive(mutex);
+    return current;
+}
+
 static void handle_control_work(const ControlWork &work) {
     if (work.type != ControlWorkType::RelayCommand) return;
+    if (!control_work_still_current(work)) {
+        ESP_LOGD(TAG, "Dropping stale queued relay command");
+        return;
+    }
 
     DeviceRecord actuator = {};
     DeviceCapability capability = {};
@@ -329,6 +345,10 @@ static void run_stale_check(void) {
     if (should_emit) {
         emit_event("control.rule_stale", nullptr);
         orchestrator_state_broadcast_snapshot();
+        esp_err_t err = subscribe_configured_temperature_or_start_fallback();
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "Temperature stale resubscribe failed: %s", esp_err_to_name(err));
+        }
     }
 }
 
