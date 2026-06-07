@@ -4,6 +4,7 @@
 #include "commands/thread_commands.h"
 #include "commands/wifi_commands.h"
 #include "control/temperature_control.h"
+#include "matter_interface.h"
 #include "matter/matter_discovery.h"
 #include "messages/outbound_message_builder.h"
 #include "registry/device_registry.h"
@@ -490,9 +491,12 @@ static CommandExecutionResult process_command_message(const char *action, const 
     if (strcmp(action, "thread.active_dataset_get") == 0) {
         otOperationalDataset dataset;
         esp_err_t err = thread_get_active_dataset(&dataset);
-        if (err != ESP_OK) return command_result(err);
         cJSON *out = cJSON_CreateObject();
         if (!out) return command_result(ESP_ERR_NO_MEM, nullptr, "Failed to build Thread dataset payload");
+        if (err != ESP_OK) {
+            cJSON_AddBoolToObject(out, "present", false);
+            return command_result(ESP_OK, out);
+        }
         cJSON_AddBoolToObject(out, "present", true);
         cJSON_AddNumberToObject(out, "active_timestamp", static_cast<double>(dataset.mActiveTimestamp.mSeconds));
         cJSON_AddStringToObject(out, "network_name", reinterpret_cast<const char *>(dataset.mNetworkName.m8));
@@ -727,9 +731,23 @@ static CommandExecutionResult process_command_message(const char *action, const 
         return command_result(ESP_OK, out);
     }
 
+    if (strcmp(action, "matter.platform_reset") == 0) {
+        esp_err_t err = matter_interface_platform_reset();
+        if (err != ESP_OK) {
+            return command_result(err, nullptr, "Failed to reset Matter platform namespaces");
+        }
+        orchestrator_state_set_matter_platform_initialized(false);
+        orchestrator_state_set_matter_platform_error(matter_interface_get_last_error());
+        cJSON *out = cJSON_CreateObject();
+        if (!out) return command_result(ESP_ERR_NO_MEM, nullptr, "Failed to build Matter platform reset payload");
+        cJSON_AddBoolToObject(out, "accepted", true);
+        cJSON_AddBoolToObject(out, "reboot_required", true);
+        return command_result(ESP_OK, out);
+    }
+
     if (strcmp(action, "matter.controller_init") == 0) {
         bool platform_initialized = false;
-        char platform_error[96] = {};
+        char platform_error[192] = {};
         if (orchestrator_state_get_matter_platform_status(&platform_initialized,
                                                           platform_error,
                                                           sizeof(platform_error)) != ESP_OK ||

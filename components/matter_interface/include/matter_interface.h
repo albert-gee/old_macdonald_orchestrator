@@ -9,6 +9,8 @@ extern "C" {
 #endif
 
 esp_err_t matter_interface_init(esp_matter::event_callback_t handle_chip_device_event, intptr_t callback_arg);
+esp_err_t matter_interface_platform_reset(void);
+const char *matter_interface_get_last_error(void);
 
 #ifdef __cplusplus
 }

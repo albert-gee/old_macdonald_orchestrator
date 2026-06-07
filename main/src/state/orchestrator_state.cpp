@@ -25,7 +25,7 @@ struct ThreadState {
 
 struct MatterState {
     bool platform_initialized;
-    char platform_error[96];
+    char platform_error[192];
     bool controller_initialized;
     size_t commissioned_node_count;
 };

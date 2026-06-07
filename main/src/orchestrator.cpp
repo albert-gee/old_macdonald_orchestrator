@@ -75,8 +75,13 @@ extern "C" void app_main() {
     err = matter_interface_init(handle_chip_device_event, 0);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to initialize Matter interface: %s", esp_err_to_name(err));
-        char platform_error[96] = {};
-        snprintf(platform_error, sizeof(platform_error), "MATTER_PLATFORM_INIT_FAILED:%s", esp_err_to_name(err));
+        char platform_error[192] = {};
+        const char *matter_detail = matter_interface_get_last_error();
+        if (matter_detail && matter_detail[0] != '\0') {
+            snprintf(platform_error, sizeof(platform_error), "MATTER_PLATFORM_INIT_FAILED:%s", matter_detail);
+        } else {
+            snprintf(platform_error, sizeof(platform_error), "MATTER_PLATFORM_INIT_FAILED:%s", esp_err_to_name(err));
+        }
         orchestrator_state_set_matter_platform_error(platform_error);
     } else {
         orchestrator_state_set_matter_platform_initialized(true);
