@@ -5,6 +5,7 @@
 #include <esp_matter.h>
 
 #include "../../include/messages/outbound_message_builder.h"
+#include "matter/matter_discovery.h"
 
 static const char *TAG = "CHIP_EVENT_HANDLER";
 
@@ -67,6 +68,9 @@ void handle_chip_device_event(const ChipDeviceEvent *event, intptr_t arg) {
 void attribute_data_report_callback(uint64_t remote_node_id, const chip::app::ConcreteDataAttributePath &path,
                                     chip::TLV::TLVReader *data) {
     ESP_LOGI(TAG, "Received attribute report from node: %" PRIu64, remote_node_id);
+
+    chip::TLV::TLVReader discovery_reader = *data;
+    matter_discovery_handle_attribute_report(remote_node_id, path, &discovery_reader);
 
     char value_str[256] = {};
     bool value_extracted = false;

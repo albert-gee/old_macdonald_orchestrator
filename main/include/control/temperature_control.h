@@ -22,8 +22,12 @@ esp_err_t temperature_control_upsert_rule(const char *rule_id,
                                           double min_celsius,
                                           double max_celsius);
 esp_err_t temperature_control_get_rule(cJSON **out);
+esp_err_t temperature_control_get_chamber(cJSON **out);
 esp_err_t temperature_control_set_enabled(bool enabled);
 esp_err_t temperature_control_delete_rule(void);
+esp_err_t temperature_control_note_manual_relay_command(const char *device_id,
+                                                        const char *capability_id,
+                                                        bool on);
 esp_err_t temperature_control_handle_attribute_report(uint64_t node_id,
                                                       uint16_t endpoint_id,
                                                       uint32_t cluster_id,

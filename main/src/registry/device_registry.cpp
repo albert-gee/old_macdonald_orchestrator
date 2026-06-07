@@ -173,6 +173,26 @@ esp_err_t device_registry_get_device(const char *device_id, DeviceRecord *record
     return ESP_ERR_NOT_FOUND;
 }
 
+esp_err_t device_registry_get_device_by_node_id(uint64_t node_id, DeviceRecord *record) {
+    if (!record) return ESP_ERR_INVALID_ARG;
+    RegistryStore *store = alloc_store();
+    if (!store) return ESP_ERR_NO_MEM;
+    esp_err_t err = load_store(store);
+    if (err != ESP_OK) {
+        free(store);
+        return err;
+    }
+    for (uint32_t i = 0; i < store->count; ++i) {
+        if (store->records[i].node_id == node_id) {
+            *record = store->records[i];
+            free(store);
+            return ESP_OK;
+        }
+    }
+    free(store);
+    return ESP_ERR_NOT_FOUND;
+}
+
 esp_err_t device_registry_remove_device(const char *device_id) {
     if (!device_id) return ESP_ERR_INVALID_ARG;
     RegistryStore *store = alloc_store();

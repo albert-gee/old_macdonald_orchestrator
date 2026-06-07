@@ -49,6 +49,7 @@ struct DeviceRecord {
 esp_err_t device_registry_init(void);
 esp_err_t device_registry_upsert_device(const DeviceRecord *record);
 esp_err_t device_registry_get_device(const char *device_id, DeviceRecord *record);
+esp_err_t device_registry_get_device_by_node_id(uint64_t node_id, DeviceRecord *record);
 esp_err_t device_registry_remove_device(const char *device_id);
 esp_err_t device_registry_rename_device(const char *device_id, const char *label);
 esp_err_t device_registry_find_capability(const char *device_id,

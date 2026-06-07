@@ -322,6 +322,14 @@ esp_err_t temperature_control_get_rule(cJSON **out) {
     return *out ? ESP_OK : ESP_ERR_NO_MEM;
 }
 
+esp_err_t temperature_control_get_chamber(cJSON **out) {
+    if (!out) return ESP_ERR_INVALID_ARG;
+    xSemaphoreTake(mutex, portMAX_DELAY);
+    *out = chamber_json_locked();
+    xSemaphoreGive(mutex);
+    return *out ? ESP_OK : ESP_ERR_NO_MEM;
+}
+
 esp_err_t temperature_control_set_enabled(bool enabled) {
     xSemaphoreTake(mutex, portMAX_DELAY);
     if (!rule.configured) {
@@ -336,6 +344,23 @@ esp_err_t temperature_control_set_enabled(bool enabled) {
     emit_event(enabled ? "control.rule_enabled" : "control.rule_disabled", nullptr);
     orchestrator_state_broadcast_snapshot();
     return err;
+}
+
+esp_err_t temperature_control_note_manual_relay_command(const char *device_id,
+                                                        const char *capability_id,
+                                                        bool on) {
+    if (!device_id || !capability_id) return ESP_ERR_INVALID_ARG;
+    xSemaphoreTake(mutex, portMAX_DELAY);
+    if (rule.configured &&
+        strncmp(device_id, rule.actuator_device_id, DEVICE_REGISTRY_ID_MAX) == 0 &&
+        strncmp(capability_id, rule.actuator_capability_id, DEVICE_REGISTRY_ID_MAX) == 0) {
+        latest.last_command_known = true;
+        latest.last_commanded_on = on;
+        copy_field(latest.control_state, on ? "cooling" : "idle", sizeof(latest.control_state));
+    }
+    xSemaphoreGive(mutex);
+    orchestrator_state_broadcast_snapshot();
+    return ESP_OK;
 }
 
 esp_err_t temperature_control_delete_rule(void) {

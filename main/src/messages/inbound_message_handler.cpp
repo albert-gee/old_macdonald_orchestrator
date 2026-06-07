@@ -4,6 +4,7 @@
 #include "commands/thread_commands.h"
 #include "commands/wifi_commands.h"
 #include "control/temperature_control.h"
+#include "matter/matter_discovery.h"
 #include "messages/outbound_message_builder.h"
 #include "registry/device_registry.h"
 #include "sdkconfig.h"
@@ -480,8 +481,10 @@ static CommandExecutionResult process_command_message(const char *action, const 
 #endif
 
     if (strcmp(action, "chamber.status_get") == 0) {
-        cJSON *out = orchestrator_state_to_json();
-        if (!out) return command_result(ESP_ERR_NO_MEM, nullptr, "Failed to build state payload");
+        cJSON *out = nullptr;
+        if (temperature_control_get_chamber(&out) != ESP_OK) {
+            return command_result(ESP_ERR_NO_MEM, nullptr, "Failed to build chamber payload");
+        }
         return command_result(ESP_OK, out);
     }
 
@@ -552,6 +555,19 @@ static CommandExecutionResult process_command_message(const char *action, const 
         if (err != ESP_OK) return command_result(err, nullptr, "Device not found");
         cJSON *out = device_to_json(record);
         if (!out) return command_result(ESP_ERR_NO_MEM, nullptr, "Failed to build device payload");
+        return command_result(ESP_OK, out);
+    }
+
+    if (strcmp(action, "device.refresh") == 0) {
+        const cJSON *device_id = required_string_field(payload, "device_id");
+        if (!device_id) return command_result(ESP_ERR_INVALID_ARG, nullptr, "Missing device_id");
+        esp_err_t err = matter_discovery_refresh_device(device_id->valuestring);
+        if (err != ESP_OK) return command_result(err, nullptr, "Matter discovery failed");
+        cJSON *out = cJSON_CreateObject();
+        if (!out) return command_result(ESP_ERR_NO_MEM, nullptr, "Failed to build refresh payload");
+        cJSON_AddStringToObject(out, "device_id", device_id->valuestring);
+        cJSON_AddBoolToObject(out, "accepted", true);
+        cJSON_AddStringToObject(out, "result_delivery", "device.registry_changed");
         return command_result(ESP_OK, out);
     }
 
@@ -634,6 +650,7 @@ static CommandExecutionResult process_command_message(const char *action, const 
         err = execute_cmd_invoke_command(record.node_id, capability.endpoint_id, capability.cluster_id,
                                          cJSON_IsTrue(on) ? 0x01 : 0x00, "{}");
         if (err != ESP_OK) return command_result(err);
+        temperature_control_note_manual_relay_command(device_id->valuestring, capability.capability_id, cJSON_IsTrue(on));
         cJSON *out = cJSON_CreateObject();
         if (!out) return command_result(ESP_ERR_NO_MEM, nullptr, "Failed to build relay payload");
         cJSON_AddStringToObject(out, "device_id", device_id->valuestring);
