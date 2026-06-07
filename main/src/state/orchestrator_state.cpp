@@ -24,6 +24,8 @@ struct ThreadState {
 };
 
 struct MatterState {
+    bool platform_initialized;
+    char platform_error[96];
     bool controller_initialized;
     size_t commissioned_node_count;
 };
@@ -110,6 +112,35 @@ esp_err_t orchestrator_state_set_thread_dataset_present(bool present) {
     return with_lock([](void *ctx) { state.thread.dataset_present = *static_cast<bool *>(ctx); }, &present);
 }
 
+esp_err_t orchestrator_state_set_matter_platform_initialized(bool initialized) {
+    return with_lock([](void *ctx) {
+        state.matter.platform_initialized = *static_cast<bool *>(ctx);
+        if (state.matter.platform_initialized) {
+            state.matter.platform_error[0] = '\0';
+        }
+    }, &initialized);
+}
+
+esp_err_t orchestrator_state_set_matter_platform_error(const char *error) {
+    return with_lock([](void *ctx) {
+        state.matter.platform_initialized = false;
+        state.matter.controller_initialized = false;
+        copy_string(state.matter.platform_error, static_cast<const char *>(ctx), sizeof(state.matter.platform_error));
+    }, const_cast<char *>(error));
+}
+
+esp_err_t orchestrator_state_get_matter_platform_status(bool *initialized, char *error, size_t error_len) {
+    if (!initialized) return ESP_ERR_INVALID_ARG;
+    if (!state_mutex) return ESP_ERR_INVALID_STATE;
+    xSemaphoreTake(state_mutex, portMAX_DELAY);
+    *initialized = state.matter.platform_initialized;
+    if (error && error_len > 0) {
+        copy_string(error, state.matter.platform_error, error_len);
+    }
+    xSemaphoreGive(state_mutex);
+    return ESP_OK;
+}
+
 esp_err_t orchestrator_state_set_matter_controller_initialized(bool initialized) {
     return with_lock([](void *ctx) { state.matter.controller_initialized = *static_cast<bool *>(ctx); }, &initialized);
 }
@@ -149,6 +180,12 @@ static cJSON *snapshot_to_json(const OrchestratorState &snapshot) {
     cJSON_AddBoolToObject(thread, "dataset_present", snapshot.thread.dataset_present);
 
     cJSON *matter = cJSON_AddObjectToObject(root, "matter");
+    cJSON_AddBoolToObject(matter, "platform_initialized", snapshot.matter.platform_initialized);
+    if (snapshot.matter.platform_error[0]) {
+        cJSON_AddStringToObject(matter, "platform_error", snapshot.matter.platform_error);
+    } else {
+        cJSON_AddNullToObject(matter, "platform_error");
+    }
     cJSON_AddBoolToObject(matter, "controller_initialized", snapshot.matter.controller_initialized);
     cJSON *nodes = device_registry_commissioned_nodes_to_json();
     if (nodes) cJSON_AddItemToObject(matter, "commissioned_nodes", nodes);

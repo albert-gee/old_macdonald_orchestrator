@@ -13,6 +13,9 @@ set(MATTER_SDK_PATH ${ESP_MATTER_PATH}/connectedhomeip/connectedhomeip)
 # Update the system PATH to include Pigweed tools
 set(ENV{PATH} "$ENV{PATH}:${ESP_MATTER_PATH}/connectedhomeip/connectedhomeip/.environment/cipd/packages/pigweed")
 
+# Include essential ESP-IDF CMake configuration before referencing IDF_TARGET
+include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+
 # Set ESP_MATTER_DEVICE_PATH based on the target hardware platform
 if(NOT DEFINED ENV{ESP_MATTER_DEVICE_PATH})
     if("${IDF_TARGET}" STREQUAL "esp32" OR "${IDF_TARGET}" STREQUAL "")
@@ -28,8 +31,6 @@ if(NOT DEFINED ENV{ESP_MATTER_DEVICE_PATH})
     endif()
 endif(NOT DEFINED ENV{ESP_MATTER_DEVICE_PATH})
 
-# Include essential CMake configuration files before referencing IDF_TARGET
-include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 include($ENV{ESP_MATTER_DEVICE_PATH}/esp_matter_device.cmake)
 
 # Define extra component directories required for the project
@@ -54,4 +55,3 @@ idf_build_set_property(COMPILE_OPTIONS "-D_NO_GENERIC_THREAD_NETWORK_COMMISSIONI
 
 # Adjust warning flags for RISCV-based chips to suppress format-related warnings
 idf_build_set_property(COMPILE_OPTIONS "-Wno-format-nonliteral;-Wno-format-security;-Wformat=0" APPEND)
-

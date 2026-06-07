@@ -11,6 +11,7 @@
 
 #include <nvs_flash.h>
 #include <esp_netif.h>
+#include <cstdio>
 
 static const char *TAG = "ORCHESTRATOR";
 
@@ -67,7 +68,6 @@ extern "C" void app_main() {
     err = thread_interface_init(handle_thread_event);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to initialize Thread stack: %s", esp_err_to_name(err));
-        return;
     }
 #endif // CONFIG_OPENTHREAD_ENABLED
 
@@ -75,7 +75,11 @@ extern "C" void app_main() {
     err = matter_interface_init(handle_chip_device_event, 0);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to initialize Matter interface: %s", esp_err_to_name(err));
-        return;
+        char platform_error[96] = {};
+        snprintf(platform_error, sizeof(platform_error), "MATTER_PLATFORM_INIT_FAILED:%s", esp_err_to_name(err));
+        orchestrator_state_set_matter_platform_error(platform_error);
+    } else {
+        orchestrator_state_set_matter_platform_initialized(true);
     }
 
     // Start Wi-Fi

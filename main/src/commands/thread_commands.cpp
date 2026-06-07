@@ -10,6 +10,12 @@ static const char *TAG = "THREAD_COMMANDS";
 // ---- Stack Control ----
 
 esp_err_t execute_thread_enable_command() {
+    otOperationalDataset dataset = {};
+    if (thread_get_active_dataset(&dataset) != ESP_OK) {
+        ESP_LOGW(TAG, "Cannot enable Thread: no active dataset configured");
+        return ESP_ERR_NOT_FOUND;
+    }
+
     ESP_RETURN_ON_ERROR(ifconfig_up(), TAG, "Failed to bring interface up");
     ESP_RETURN_ON_ERROR(thread_start(), TAG, "Failed to start Thread stack");
     return ESP_OK;

@@ -427,7 +427,15 @@ static CommandExecutionResult process_command_message(const char *action, const 
     ESP_LOGI(TAG, "Processing command action: %s", action);
 
 #if CONFIG_OPENTHREAD_ENABLED
-    if (strcmp(action, "thread.enable") == 0) return command_result(execute_thread_enable_command());
+    if (strcmp(action, "thread.enable") == 0) {
+        esp_err_t err = execute_thread_enable_command();
+        if (err == ESP_ERR_NOT_FOUND) {
+            return command_result(err, nullptr,
+                                  "Thread cannot be enabled until an active dataset is configured",
+                                  "THREAD_DATASET_NOT_CONFIGURED");
+        }
+        return command_result(err);
+    }
     if (strcmp(action, "thread.disable") == 0) return command_result(execute_thread_disable_command());
 
     if (strcmp(action, "thread.dataset.init") == 0) {
@@ -720,6 +728,18 @@ static CommandExecutionResult process_command_message(const char *action, const 
     }
 
     if (strcmp(action, "matter.controller_init") == 0) {
+        bool platform_initialized = false;
+        char platform_error[96] = {};
+        if (orchestrator_state_get_matter_platform_status(&platform_initialized,
+                                                          platform_error,
+                                                          sizeof(platform_error)) != ESP_OK ||
+            !platform_initialized) {
+            char message[160] = {};
+            snprintf(message, sizeof(message), "Matter platform is not initialized: %s",
+                     platform_error[0] ? platform_error : "unknown platform error");
+            return command_result(ESP_ERR_INVALID_STATE, nullptr, message, "MATTER_PLATFORM_NOT_INITIALIZED");
+        }
+
         uint64_t node_id_val;
         const cJSON *fabric_id = required_number_field(payload, "fabric_id");
         const cJSON *listen_port = required_number_field(payload, "listen_port");

@@ -7,6 +7,7 @@
 #include <esp_openthread_types.h>
 #include <portmacro.h>
 #include <cJSON.h>
+#include <cstring>
 
 static const char *TAG = "THREAD_EVENT_HANDLER";
 
@@ -17,12 +18,15 @@ void handle_thread_event(void *arg, const esp_event_base_t event_base, const int
     }
 
     switch (event_id) {
-        case OPENTHREAD_EVENT_START:
-            orchestrator_state_set_thread_enabled(true);
-            orchestrator_state_broadcast_event("thread.enabled", nullptr);
-            broadcast_info_thread_stack_status_message(true);
+        case OPENTHREAD_EVENT_START: {
+            bool running = false;
+            if (thread_is_stack_running(&running) != ESP_OK) running = false;
+            orchestrator_state_set_thread_enabled(running);
+            if (running) orchestrator_state_broadcast_event("thread.enabled", nullptr);
+            broadcast_info_thread_stack_status_message(running);
             orchestrator_state_broadcast_snapshot();
             break;
+        }
 
         case OPENTHREAD_EVENT_STOP:
             orchestrator_state_set_thread_enabled(false);
@@ -56,6 +60,7 @@ void handle_thread_event(void *arg, const esp_event_base_t event_base, const int
         case OPENTHREAD_EVENT_ROLE_CHANGED: {
             const char *role_str = nullptr;
             if (thread_get_device_role_string(&role_str) == ESP_OK && role_str != nullptr) {
+                orchestrator_state_set_thread_enabled(strcmp(role_str, "disabled") != 0);
                 orchestrator_state_set_thread_role(role_str);
                 cJSON *payload = cJSON_CreateObject();
                 if (payload) cJSON_AddStringToObject(payload, "role", role_str);
