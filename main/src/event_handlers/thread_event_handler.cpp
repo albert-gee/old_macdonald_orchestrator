@@ -110,8 +110,23 @@ void handle_thread_event(void *arg, const esp_event_base_t event_base, const int
             break;
 
         case OPENTHREAD_EVENT_DATASET_CHANGED: {
-            otOperationalDataset dataset;
-            if (thread_get_active_dataset(&dataset) == ESP_OK) {
+            auto *dataset_event = static_cast<esp_openthread_dataset_changed_event_t *>(event_data);
+            if (!dataset_event) {
+                ESP_LOGW(TAG, "Dataset changed event missing payload");
+                break;
+            }
+
+            if (dataset_event->type != OPENTHREAD_ACTIVE_DATASET) {
+                ESP_LOGI(TAG, "Ignoring pending dataset change event");
+                break;
+            }
+
+            if (dataset_event->new_dataset.mComponents.mIsNetworkNamePresent &&
+                dataset_event->new_dataset.mComponents.mIsExtendedPanIdPresent &&
+                dataset_event->new_dataset.mComponents.mIsMeshLocalPrefixPresent &&
+                dataset_event->new_dataset.mComponents.mIsPanIdPresent &&
+                dataset_event->new_dataset.mComponents.mIsChannelPresent) {
+                const otOperationalDataset &dataset = dataset_event->new_dataset;
                 orchestrator_state_set_thread_dataset_present(true);
                 orchestrator_state_broadcast_event("thread.dataset_changed", nullptr);
                 broadcast_info_active_dataset_message(
@@ -124,7 +139,9 @@ void handle_thread_event(void *arg, const esp_event_base_t event_base, const int
                 );
                 orchestrator_state_broadcast_snapshot();
             } else {
-                ESP_LOGW(TAG, "Failed to get active dataset");
+                orchestrator_state_set_thread_dataset_present(false);
+                ESP_LOGW(TAG, "Active dataset changed, but no complete active dataset was provided");
+                orchestrator_state_broadcast_snapshot();
             }
             break;
         }

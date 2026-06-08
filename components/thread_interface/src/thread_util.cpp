@@ -9,6 +9,7 @@
 
 #include <openthread/dataset.h>
 #include <openthread/dataset_ftd.h>
+#include <openthread/ip6.h>
 #include <openthread/instance.h>
 #include <openthread/thread.h>
 #include <cstring>
@@ -84,6 +85,29 @@ static size_t hex_string_to_bytes(const char *hex_string, uint8_t *output_buffer
     return output_size;
 }
 
+static bool parse_mesh_local_prefix(const char *mesh_local_prefix, otMeshLocalPrefix *output) {
+    if (!mesh_local_prefix || !output) return false;
+
+    otIp6Prefix prefix = {};
+    if (otIp6PrefixFromString(mesh_local_prefix, &prefix) == OT_ERROR_NONE) {
+        if (prefix.mLength != OT_IP6_PREFIX_BITSIZE) {
+            ESP_LOGE(TAG, "Mesh-local prefix must be /%d, got /%u", OT_IP6_PREFIX_BITSIZE, prefix.mLength);
+            return false;
+        }
+        memcpy(output->m8, prefix.mPrefix.mFields.m8, sizeof(output->m8));
+        return true;
+    }
+
+    otIp6Address address = {};
+    if (otIp6AddressFromString(mesh_local_prefix, &address) == OT_ERROR_NONE) {
+        memcpy(output->m8, address.mFields.m8, sizeof(output->m8));
+        return true;
+    }
+
+    ESP_LOGE(TAG, "Invalid mesh-local prefix: %s", mesh_local_prefix);
+    return false;
+}
+
 esp_err_t thread_dataset_init(const uint16_t channel, const uint16_t pan_id, const char *network_name,
                               const char *extended_pan_id, const char *mesh_local_prefix,
                               const char *network_key, const char *pskc) {
@@ -121,13 +145,11 @@ esp_err_t thread_dataset_init(const uint16_t channel, const uint16_t pan_id, con
     }
     dataset->mComponents.mIsExtendedPanIdPresent = true;
 
-    otIp6Prefix prefix = {};
-    if (otIp6PrefixFromString(mesh_local_prefix, &prefix) != OT_ERROR_NONE) {
+    if (!parse_mesh_local_prefix(mesh_local_prefix, &dataset->mMeshLocalPrefix)) {
         free(dataset);
         esp_openthread_lock_release();
-        return ESP_FAIL;
+        return ESP_ERR_INVALID_ARG;
     }
-    memcpy(dataset->mMeshLocalPrefix.m8, prefix.mPrefix.mFields.m8, sizeof(dataset->mMeshLocalPrefix.m8));
     dataset->mComponents.mIsMeshLocalPrefixPresent = true;
 
     if (hex_string_to_bytes(network_key, dataset->mNetworkKey.m8, sizeof(dataset->mNetworkKey.m8)) != sizeof(dataset->mNetworkKey.m8)) {
