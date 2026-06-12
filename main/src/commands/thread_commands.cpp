@@ -1,4 +1,5 @@
 #include "commands/thread_commands.h"
+#include "state/orchestrator_state.h"
 #include "thread_util.h"
 #include <esp_log.h>
 #include <esp_check.h>
@@ -17,13 +18,17 @@ esp_err_t execute_thread_enable_command() {
     }
 
     ESP_RETURN_ON_ERROR(ifconfig_up(), TAG, "Failed to bring interface up");
+    orchestrator_state_set_thread_interface_up(true);
     ESP_RETURN_ON_ERROR(thread_start(), TAG, "Failed to start Thread stack");
+    orchestrator_state_set_thread_enabled(true);
     return ESP_OK;
 }
 
 esp_err_t execute_thread_disable_command() {
     ESP_RETURN_ON_ERROR(thread_stop(), TAG, "Failed to stop Thread stack");
+    orchestrator_state_set_thread_enabled(false);
     ESP_RETURN_ON_ERROR(ifconfig_down(), TAG, "Failed to bring interface down");
+    orchestrator_state_set_thread_interface_up(false);
     return ESP_OK;
 }
 
@@ -103,9 +108,13 @@ esp_err_t execute_thread_multicast_addresses_get_command(char **addresses, size_
 // ---- Border Router ----
 
 esp_err_t execute_thread_br_init_command() {
-    return thread_br_init();
+    const esp_err_t err = thread_br_init();
+    if (err == ESP_OK) orchestrator_state_set_thread_border_router_initialized(true);
+    return err;
 }
 
 esp_err_t execute_thread_br_deinit_command() {
-    return thread_br_deinit();
+    const esp_err_t err = thread_br_deinit();
+    if (err == ESP_OK) orchestrator_state_set_thread_border_router_initialized(false);
+    return err;
 }

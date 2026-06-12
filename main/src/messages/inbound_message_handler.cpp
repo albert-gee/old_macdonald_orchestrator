@@ -1,21 +1,25 @@
 #include "messages/inbound_message_handler.h"
 
 #include "commands/matter_commands.h"
+#include "commands/thread_cli_commands.h"
 #include "commands/thread_commands.h"
 #include "commands/wifi_commands.h"
 #include "control/temperature_control.h"
 #include "matter_interface.h"
+#include "matter_controller.h"
 #include "matter/matter_discovery.h"
 #include "messages/outbound_message_builder.h"
 #include "registry/device_registry.h"
 #include "sdkconfig.h"
 #include "state/orchestrator_state.h"
+#include "storage/nvs_diagnostics.h"
 #include "thread_util.h"
 
 #include <cJSON.h>
 #include <esp_check.h>
 #include <esp_err.h>
 #include <esp_log.h>
+#include <nvs_flash.h>
 #include <cerrno>
 #include <cstring>
 #include <cstdlib>
@@ -28,6 +32,7 @@ struct CommandExecutionResult {
     esp_err_t err;
     cJSON *payload;
     bool unknown_action;
+    bool deferred;
     char error_code[64];
     char error_message[128];
 };
@@ -40,6 +45,7 @@ static CommandExecutionResult command_result(esp_err_t err,
         .err = err,
         .payload = payload,
         .unknown_action = false,
+        .deferred = false,
         .error_code = {},
         .error_message = {}
     };
@@ -49,6 +55,12 @@ static CommandExecutionResult command_result(esp_err_t err,
     if (message) {
         strncpy(result.error_message, message, sizeof(result.error_message) - 1);
     }
+    return result;
+}
+
+static CommandExecutionResult deferred_command_result(void) {
+    CommandExecutionResult result = command_result(ESP_OK);
+    result.deferred = true;
     return result;
 }
 
@@ -113,6 +125,33 @@ static const cJSON *required_number_field(const cJSON *payload, const char *name
         return nullptr;
     }
     return item;
+}
+
+static bool prepare_operational_hint_from_payload(const cJSON *payload,
+                                                  uint64_t node_id,
+                                                  char *error_message,
+                                                  size_t error_message_len) {
+    const cJSON *operational_ip = optional_string_field(payload, "operational_ip");
+    if (!operational_ip || !operational_ip->valuestring || !operational_ip->valuestring[0]) {
+        return true;
+    }
+
+    uint16_t operational_port = 5540;
+    const cJSON *operational_port_item = cJSON_GetObjectItem(payload, "operational_port");
+    if (operational_port_item) {
+        if (!cJSON_IsNumber(operational_port_item) ||
+            operational_port_item->valueint <= 0 ||
+            operational_port_item->valueint > UINT16_MAX) {
+            snprintf(error_message, error_message_len, "Invalid Matter operational port");
+            return false;
+        }
+        operational_port = static_cast<uint16_t>(operational_port_item->valueint);
+    }
+
+    matter_controller_prepare_operational_address_hint(node_id,
+                                                       operational_ip->valuestring,
+                                                       operational_port);
+    return true;
 }
 
 static bool required_uint64_string_field(const cJSON *payload, const char *name, uint64_t *out) {
@@ -225,6 +264,21 @@ static bool add_accepted_payload_field(cJSON *payload, const char *device_id, co
            cJSON_AddStringToObject(payload, "result_delivery", delivery);
 }
 
+static cJSON *pairing_accepted_payload(uint64_t node_id, const char *transport) {
+    cJSON *out = cJSON_CreateObject();
+    if (!out) return nullptr;
+    char node_id_str[24] = {};
+    char device_id[40] = {};
+    snprintf(node_id_str, sizeof(node_id_str), "%" PRIu64, node_id);
+    snprintf(device_id, sizeof(device_id), "node-%" PRIu64, node_id);
+    cJSON_AddStringToObject(out, "node_id", node_id_str);
+    cJSON_AddStringToObject(out, "device_id", device_id);
+    cJSON_AddStringToObject(out, "transport", transport);
+    cJSON_AddBoolToObject(out, "accepted", true);
+    cJSON_AddStringToObject(out, "result_delivery", "matter.commissioning_complete");
+    return out;
+}
+
 static esp_err_t find_capability_by_id(const char *device_id,
                                        const char *capability_id,
                                        DeviceCapabilitySemanticType semantic,
@@ -297,6 +351,39 @@ static CommandExecutionResult accepted_device_payload(const char *device_id) {
         return command_result(ESP_ERR_NO_MEM, nullptr, "Failed to build accepted payload");
     }
     return command_result(ESP_OK, out);
+}
+
+static CommandExecutionResult nvs_stats_command_result(void) {
+    cJSON *out = nvs_diagnostics_to_json();
+    if (!out) {
+        return command_result(ESP_ERR_NO_MEM, nullptr, "Failed to build NVS stats payload");
+    }
+    return command_result(ESP_OK, out);
+}
+
+static CommandExecutionResult thread_dataset_init_result(esp_err_t err) {
+    switch (err) {
+        case ESP_OK:
+            return command_result(ESP_OK);
+        case ESP_ERR_NVS_NOT_ENOUGH_SPACE:
+            return command_result(err, nullptr,
+                                  "OpenThread settings storage is full. The active dataset cannot be saved.",
+                                  "THREAD_STORAGE_FULL");
+        case ESP_ERR_INVALID_ARG:
+            return command_result(err, nullptr,
+                                  "Thread dataset payload is invalid.",
+                                  "INVALID_THREAD_DATASET");
+        case ESP_ERR_INVALID_STATE:
+            return command_result(err, nullptr,
+                                  "OpenThread platform is not initialized.",
+                                  "THREAD_PLATFORM_NOT_INITIALIZED");
+        case ESP_FAIL:
+            return command_result(err, nullptr,
+                                  "Thread active dataset could not be initialized.",
+                                  "THREAD_DATASET_INIT_FAILED");
+        default:
+            return command_result(err);
+    }
 }
 
 static cJSON *capability_to_json(const DeviceCapability &capability) {
@@ -424,10 +511,53 @@ static CommandExecutionResult add_capability_command(const cJSON *payload) {
     return command_result(ESP_OK, out);
 }
 
-static CommandExecutionResult process_command_message(const char *action, const cJSON *payload) {
+static CommandExecutionResult process_command_message(const char *action,
+                                                      const cJSON *payload,
+                                                      const char *request_id,
+                                                      int client_fd) {
     ESP_LOGI(TAG, "Processing command action: %s", action);
 
+    if (strcmp(action, "system.nvs_stats_get") == 0 ||
+        strcmp(action, "thread.storage_status_get") == 0) {
+        return nvs_stats_command_result();
+    }
+
 #if CONFIG_OPENTHREAD_ENABLED
+    if (strcmp(action, "thread.cli.capabilities") == 0) {
+        cJSON *out = thread_cli_capabilities_json();
+        if (!out) return command_result(ESP_ERR_NO_MEM, nullptr, "Failed to build Thread CLI capabilities");
+        return command_result(ESP_OK, out);
+    }
+    if (strcmp(action, "thread.cli.history") == 0) {
+        cJSON *out = thread_cli_history_json();
+        if (!out) return command_result(ESP_ERR_NO_MEM, nullptr, "Failed to build Thread CLI history");
+        return command_result(ESP_OK, out);
+    }
+    if (strcmp(action, "thread.cli.cancel") == 0) {
+        const cJSON *target = required_string_field(payload, "request_id");
+        if (!target) return command_result(ESP_ERR_INVALID_ARG, nullptr, "Missing Thread CLI request_id");
+        return command_result(thread_cli_cancel(target->valuestring));
+    }
+    if (thread_cli_is_deferred_action(action)) {
+        char error_code[64] = {};
+        char error_message[128] = {};
+        esp_err_t err = thread_cli_enqueue_wss_action(client_fd,
+                                                      request_id,
+                                                      action,
+                                                      payload,
+                                                      error_code,
+                                                      sizeof(error_code),
+                                                      error_message,
+                                                      sizeof(error_message));
+        if (err != ESP_OK) {
+            return command_result(err,
+                                  nullptr,
+                                  error_message[0] ? error_message : "Failed to queue Thread CLI command.",
+                                  error_code[0] ? error_code : nullptr);
+        }
+        return deferred_command_result();
+    }
+
     if (strcmp(action, "thread.enable") == 0) {
         esp_err_t err = execute_thread_enable_command();
         if (err == ESP_ERR_NOT_FOUND) {
@@ -450,12 +580,13 @@ static CommandExecutionResult process_command_message(const char *action, const 
         if (!channel || !pan_id || !network_name || !extended_pan_id || !mesh_local_prefix || !master_key || !pskc) {
             return command_result(ESP_ERR_INVALID_ARG, nullptr, "Invalid Thread dataset init payload");
         }
-        return command_result(execute_thread_dataset_init_command(channel->valueint, pan_id->valueint,
-                                                                  network_name->valuestring,
-                                                                  extended_pan_id->valuestring,
-                                                                  mesh_local_prefix->valuestring,
-                                                                  master_key->valuestring,
-                                                                  pskc->valuestring));
+        return thread_dataset_init_result(
+            execute_thread_dataset_init_command(channel->valueint, pan_id->valueint,
+                                                network_name->valuestring,
+                                                extended_pan_id->valuestring,
+                                                mesh_local_prefix->valuestring,
+                                                master_key->valuestring,
+                                                pskc->valuestring));
     }
 
     if (strcmp(action, "thread.status_get") == 0) {
@@ -532,9 +663,23 @@ static CommandExecutionResult process_command_message(const char *action, const 
     }
 
 #if CONFIG_OPENTHREAD_BORDER_ROUTER
-    if (strcmp(action, "thread.br_init") == 0) return command_result(execute_thread_br_init_command());
+    if (strcmp(action, "thread.br_init") == 0) {
+        const esp_err_t err = execute_thread_br_init_command();
+        cJSON *out = cJSON_CreateObject();
+        if (!out) return command_result(ESP_ERR_NO_MEM, nullptr, "Failed to build Border Router payload");
+        cJSON_AddBoolToObject(out, "border_router_initialized", err == ESP_OK);
+        if (err == ESP_OK) orchestrator_state_broadcast_snapshot();
+        return command_result(err, out);
+    }
 #endif
-    if (strcmp(action, "thread.br_deinit") == 0) return command_result(execute_thread_br_deinit_command());
+    if (strcmp(action, "thread.br_deinit") == 0) {
+        const esp_err_t err = execute_thread_br_deinit_command();
+        cJSON *out = cJSON_CreateObject();
+        if (!out) return command_result(ESP_ERR_NO_MEM, nullptr, "Failed to build Border Router payload");
+        cJSON_AddBoolToObject(out, "border_router_initialized", false);
+        if (err == ESP_OK) orchestrator_state_broadcast_snapshot();
+        return command_result(err, out);
+    }
 #endif
 
 #if CONFIG_ENABLE_WIFI_STATION
@@ -669,6 +814,10 @@ static CommandExecutionResult process_command_message(const char *action, const 
             ? find_capability_by_id(device_id->valuestring, capability_id->valuestring, semantic, &record, &capability)
             : find_single_capability_by_semantic(device_id->valuestring, semantic, &record, &capability, &ambiguous);
         if (err != ESP_OK) return capability_lookup_result(err, ambiguous);
+        char hint_error[96] = {};
+        if (!prepare_operational_hint_from_payload(payload, record.node_id, hint_error, sizeof(hint_error))) {
+            return command_result(ESP_ERR_INVALID_ARG, nullptr, hint_error);
+        }
         err = execute_attr_read_command(record.node_id, capability.endpoint_id, capability.cluster_id, capability.attribute_id);
         if (err != ESP_OK) return command_result(err);
         return accepted_device_payload(device_id->valuestring);
@@ -686,6 +835,10 @@ static CommandExecutionResult process_command_message(const char *action, const 
         DeviceRecord record = {};
         esp_err_t err = device_registry_get_device(device_id->valuestring, &record);
         if (err != ESP_OK) return command_result(err, nullptr, "Device not found");
+        char hint_error[96] = {};
+        if (!prepare_operational_hint_from_payload(payload, record.node_id, hint_error, sizeof(hint_error))) {
+            return command_result(ESP_ERR_INVALID_ARG, nullptr, hint_error);
+        }
         if (strcmp(action, "device.attribute.subscribe") == 0) {
             const cJSON *min = required_number_field(payload, "min_interval");
             const cJSON *max = required_number_field(payload, "max_interval");
@@ -718,6 +871,10 @@ static CommandExecutionResult process_command_message(const char *action, const 
             ? find_capability_by_id(device_id->valuestring, capability_id->valuestring, DEVICE_CAPABILITY_RELAY, &record, &capability)
             : find_single_capability_by_semantic(device_id->valuestring, DEVICE_CAPABILITY_RELAY, &record, &capability, &ambiguous);
         if (err != ESP_OK) return capability_lookup_result(err, ambiguous);
+        char hint_error[96] = {};
+        if (!prepare_operational_hint_from_payload(payload, record.node_id, hint_error, sizeof(hint_error))) {
+            return command_result(ESP_ERR_INVALID_ARG, nullptr, hint_error);
+        }
         err = execute_cmd_invoke_command(record.node_id, capability.endpoint_id, capability.cluster_id,
                                          cJSON_IsTrue(on) ? 0x01 : 0x00, "{}");
         if (err != ESP_OK) return command_result(err);
@@ -764,9 +921,24 @@ static CommandExecutionResult process_command_message(const char *action, const 
         if (!required_uint64_string_field(payload, "node_id", &node_id_val) || !fabric_id || !listen_port) {
             return command_result(ESP_ERR_INVALID_ARG, nullptr, "Invalid Matter init payload");
         }
-        return command_result(execute_matter_controller_init_command(node_id_val,
-                                                                     static_cast<uint64_t>(fabric_id->valuedouble),
-                                                                     static_cast<uint16_t>(listen_port->valueint)));
+        char error_code[64] = {};
+        char error_message[128] = {};
+        esp_err_t err = matter_command_enqueue_controller_init(client_fd,
+                                                               request_id,
+                                                               node_id_val,
+                                                               static_cast<uint64_t>(fabric_id->valuedouble),
+                                                               static_cast<uint16_t>(listen_port->valueint),
+                                                               error_code,
+                                                               sizeof(error_code),
+                                                               error_message,
+                                                               sizeof(error_message));
+        if (err != ESP_OK) {
+            return command_result(err,
+                                  nullptr,
+                                  error_message[0] ? error_message : "Failed to queue Matter controller init.",
+                                  error_code[0] ? error_code : nullptr);
+        }
+        return deferred_command_result();
     }
 
     if (strcmp(action, "matter.pair_ble_thread") == 0) {
@@ -778,7 +950,49 @@ static CommandExecutionResult process_command_message(const char *action, const 
             !required_uint16_string_field(payload, "discriminator", &disc)) {
             return command_result(ESP_ERR_INVALID_ARG, nullptr, "Invalid BLE pairing payload");
         }
-        return command_result(execute_matter_pair_ble_thread_command(node_id_val, pin, disc));
+        const cJSON *operational_ip = optional_string_field(payload, "operational_ip");
+        uint16_t operational_port = 5540;
+        const cJSON *operational_port_item = cJSON_GetObjectItem(payload, "operational_port");
+        if (operational_port_item) {
+            if (!cJSON_IsNumber(operational_port_item) ||
+                operational_port_item->valueint <= 0 ||
+                operational_port_item->valueint > UINT16_MAX) {
+                return command_result(ESP_ERR_INVALID_ARG, nullptr, "Invalid Matter operational port");
+            }
+            operational_port = static_cast<uint16_t>(operational_port_item->valueint);
+        }
+        esp_err_t err = execute_matter_pair_ble_thread_command(node_id_val,
+                                                               pin,
+                                                               disc,
+                                                               operational_ip ? operational_ip->valuestring : nullptr,
+                                                               operational_port);
+        if (err != ESP_OK) return command_result(err);
+        cJSON *out = pairing_accepted_payload(node_id_val, "ble_thread");
+        if (!out) return command_result(ESP_ERR_NO_MEM, nullptr, "Failed to build pairing payload");
+        return command_result(ESP_OK, out);
+    }
+
+    if (strcmp(action, "matter.pair_ble_wifi") == 0) {
+        uint64_t node_id_val;
+        uint32_t pin;
+        uint16_t disc;
+        const cJSON *ssid = required_string_field(payload, "ssid");
+        const cJSON *password = required_string_field(payload, "password");
+        if (!required_uint64_string_field(payload, "node_id", &node_id_val) ||
+            !required_uint32_string_field(payload, "setup_code", &pin) ||
+            !required_uint16_string_field(payload, "discriminator", &disc) ||
+            !ssid || !password) {
+            return command_result(ESP_ERR_INVALID_ARG, nullptr, "Invalid BLE Wi-Fi pairing payload");
+        }
+        esp_err_t err = execute_matter_pair_ble_wifi_command(node_id_val,
+                                                             pin,
+                                                             disc,
+                                                             ssid->valuestring,
+                                                             password->valuestring);
+        if (err != ESP_OK) return command_result(err);
+        cJSON *out = pairing_accepted_payload(node_id_val, "ble_wifi");
+        if (!out) return command_result(ESP_ERR_NO_MEM, nullptr, "Failed to build pairing payload");
+        return command_result(ESP_OK, out);
     }
 
     if (strcmp(action, "matter.cluster_command_invoke") == 0) {
@@ -789,6 +1003,10 @@ static CommandExecutionResult process_command_message(const char *action, const 
         const cJSON *data = required_string_field(payload, "command_data");
         if (!required_uint64_string_field(payload, "destination_id", &destination_id_val) || !ep || !cluster || !cmd || !data) {
             return command_result(ESP_ERR_INVALID_ARG, nullptr, "Invalid invoke payload");
+        }
+        char hint_error[96] = {};
+        if (!prepare_operational_hint_from_payload(payload, destination_id_val, hint_error, sizeof(hint_error))) {
+            return command_result(ESP_ERR_INVALID_ARG, nullptr, hint_error);
         }
         return command_result(execute_cmd_invoke_command(destination_id_val,
                                                          static_cast<uint16_t>(ep->valueint),
@@ -805,6 +1023,10 @@ static CommandExecutionResult process_command_message(const char *action, const 
         const cJSON *attr = required_number_field(payload, "attribute_id");
         if (!required_uint64_string_field(payload, "node_id", &node_id_val) || !ep || !cluster || !attr) {
             return command_result(ESP_ERR_INVALID_ARG, nullptr, "Invalid attribute payload");
+        }
+        char hint_error[96] = {};
+        if (!prepare_operational_hint_from_payload(payload, node_id_val, hint_error, sizeof(hint_error))) {
+            return command_result(ESP_ERR_INVALID_ARG, nullptr, hint_error);
         }
         esp_err_t err;
         if (strcmp(action, "matter.attribute_subscribe") == 0) {
@@ -863,8 +1085,12 @@ esp_err_t handle_json_inbound_message(const char *inbound_message, const int cli
     } else if (!cJSON_IsObject(payload)) {
         ret = send_protocol_error(client_fd, "INVALID_PAYLOAD", "Command payload must be an object");
     } else {
-        CommandExecutionResult result = process_command_message(action->valuestring, payload);
-        ret = send_command_result(client_fd, request_id->valuestring, action->valuestring, result);
+        CommandExecutionResult result = process_command_message(action->valuestring,
+                                                               payload,
+                                                               request_id->valuestring,
+                                                               client_fd);
+        ret = result.deferred ? ESP_OK
+                              : send_command_result(client_fd, request_id->valuestring, action->valuestring, result);
     }
 
     cJSON_Delete(root);

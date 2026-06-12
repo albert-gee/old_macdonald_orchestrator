@@ -2,6 +2,7 @@
 #define COMMANDS_H
 
 #include <esp_event.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -15,6 +16,17 @@ extern "C" {
  * @return A result code indicating the success or failure of the initialization process.
  */
 esp_err_t execute_matter_controller_init_command(uint64_t node_id, uint64_t fabric_id, uint16_t listen_port);
+esp_err_t matter_command_service_init(void);
+bool matter_command_is_deferred_action(const char *action);
+esp_err_t matter_command_enqueue_controller_init(int client_fd,
+                                                 const char *request_id,
+                                                 uint64_t node_id,
+                                                 uint64_t fabric_id,
+                                                 uint16_t listen_port,
+                                                 char *error_code,
+                                                 size_t error_code_len,
+                                                 char *error_message,
+                                                 size_t error_message_len);
 
 /**
  * Executes the Matter BLE (Bluetooth Low Energy) pairing process for a Thread network
@@ -32,7 +44,16 @@ esp_err_t execute_matter_controller_init_command(uint64_t node_id, uint64_t fabr
  *         - Other esp_err_t values indicating specific error conditions during dataset
  *           retrieval or pairing.
  */
-esp_err_t execute_matter_pair_ble_thread_command(uint64_t node_id, uint32_t pin, uint16_t discriminator);
+esp_err_t execute_matter_pair_ble_thread_command(uint64_t node_id,
+                                                 uint32_t pin,
+                                                 uint16_t discriminator,
+                                                 const char *operational_ip,
+                                                 uint16_t operational_port);
+esp_err_t execute_matter_pair_ble_wifi_command(uint64_t node_id,
+                                               uint32_t pin,
+                                               uint16_t discriminator,
+                                               const char *ssid,
+                                               const char *password);
 
 /**
  * Executes a command to invoke a Matter cluster-specific command.

@@ -1,6 +1,7 @@
 #include "event_handlers/wifi_event_handler.h"
 
 #include "messages/outbound_message_builder.h"
+#include "matter_controller.h"
 #include "wifi_interface.h"
 
 #include <esp_err.h>
@@ -29,6 +30,14 @@ void handle_wifi_event(void *arg, esp_event_base_t event_base, int32_t event_id,
                 orchestrator_state_broadcast_event("wifi.sta_got_ip", nullptr);
                 broadcast_info_wifi_status_message("got_ip");
                 orchestrator_state_broadcast_snapshot();
+                break;
+            }
+            case IP_EVENT_AP_STAIPASSIGNED: {
+                auto *event = static_cast<ip_event_ap_staipassigned_t *>(event_data);
+                char ip[16] = {};
+                esp_ip4addr_ntoa(&event->ip, ip, sizeof(ip));
+                ESP_LOGI(TAG, "Wi-Fi AP assigned station IP: %s", ip);
+                matter_controller_note_ap_sta_ip(&event->ip);
                 break;
             }
             default:

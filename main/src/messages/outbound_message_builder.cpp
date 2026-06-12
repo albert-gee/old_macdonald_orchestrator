@@ -17,7 +17,7 @@
 
 static const char *TAG = "JSON_OUTBOUND";
 static constexpr uint32_t MATTER_REPORT_QUEUE_LENGTH = 8;
-static constexpr uint32_t MATTER_REPORT_TASK_STACK_SIZE = 6144;
+static constexpr uint32_t MATTER_REPORT_TASK_STACK_SIZE = 4096;
 static constexpr UBaseType_t MATTER_REPORT_TASK_PRIORITY = 5;
 
 struct MatterAttributeReportWork {

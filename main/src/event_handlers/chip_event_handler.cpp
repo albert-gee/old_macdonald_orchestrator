@@ -3,9 +3,13 @@
 #include <esp_log.h>
 #include <portmacro.h>
 #include <esp_matter.h>
+#include <cstdio>
+#include <inttypes.h>
 
 #include "../../include/messages/outbound_message_builder.h"
 #include "matter/matter_discovery.h"
+#include "registry/device_registry.h"
+#include "state/orchestrator_state.h"
 
 static const char *TAG = "CHIP_EVENT_HANDLER";
 
@@ -18,6 +22,19 @@ void handle_chip_device_event(const ChipDeviceEvent *event, intptr_t arg) {
         case chip::DeviceLayer::DeviceEventType::kCommissioningComplete:
             ESP_LOGI(TAG, "New Matter device commissioned! Node ID: 0x%llX, Fabric Index: %d",
                      event->CommissioningComplete.nodeId, event->CommissioningComplete.fabricIndex);
+            {
+                DeviceRecord record = {};
+                snprintf(record.device_id, sizeof(record.device_id), "node-%" PRIu64,
+                         event->CommissioningComplete.nodeId);
+                snprintf(record.label, sizeof(record.label), "Matter node %" PRIu64,
+                         event->CommissioningComplete.nodeId);
+                record.node_id = event->CommissioningComplete.nodeId;
+                record.reachable = true;
+                if (device_registry_upsert_device(&record) == ESP_OK) {
+                    orchestrator_state_broadcast_event("device.registry_changed", nullptr);
+                    orchestrator_state_broadcast_snapshot();
+                }
+            }
             broadcast_info_matter_commissioning_complete_message(
                 event->CommissioningComplete.nodeId,
                 event->CommissioningComplete.fabricIndex);
