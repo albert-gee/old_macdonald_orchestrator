@@ -33,7 +33,7 @@
 // Default port configuration for OpenThread (NVS partition, netif and task queues).
 #define ESP_OPENTHREAD_DEFAULT_PORT_CONFIG()                        \
 {                                                                   \
-    .storage_partition_name = "nvs",                                \
+    .storage_partition_name = "ot_nvs",                             \
     .netif_queue_size = 10,                                         \
     .task_queue_size = 10,                                          \
 }

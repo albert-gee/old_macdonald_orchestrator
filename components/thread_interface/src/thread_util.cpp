@@ -5,6 +5,7 @@
 #include <esp_openthread.h>
 #include <esp_openthread_border_router.h>
 #include <esp_openthread_lock.h>
+#include <nvs_flash.h>
 #include <portmacro.h>
 
 #include <openthread/dataset.h>
@@ -94,18 +95,57 @@ static bool parse_mesh_local_prefix(const char *mesh_local_prefix, otMeshLocalPr
             ESP_LOGE(TAG, "Mesh-local prefix must be /%d, got /%u", OT_IP6_PREFIX_BITSIZE, prefix.mLength);
             return false;
         }
+        ESP_LOGI(TAG, "Using mesh-local prefix %s", mesh_local_prefix);
         memcpy(output->m8, prefix.mPrefix.mFields.m8, sizeof(output->m8));
         return true;
     }
 
     otIp6Address address = {};
     if (otIp6AddressFromString(mesh_local_prefix, &address) == OT_ERROR_NONE) {
+        ESP_LOGI(TAG, "Using mesh-local prefix %s/64", mesh_local_prefix);
         memcpy(output->m8, address.mFields.m8, sizeof(output->m8));
         return true;
     }
 
     ESP_LOGE(TAG, "Invalid mesh-local prefix: %s", mesh_local_prefix);
     return false;
+}
+
+static esp_err_t ensure_ot_nvs_capacity() {
+    nvs_stats_t stats = {};
+    const esp_err_t err = nvs_get_stats("ot_nvs", &stats);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Cannot read ot_nvs stats: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    ESP_LOGI(TAG, "ot_nvs before dataset save: used=%u free=%u total=%u namespaces=%u",
+             static_cast<unsigned>(stats.used_entries),
+             static_cast<unsigned>(stats.free_entries),
+             static_cast<unsigned>(stats.total_entries),
+             static_cast<unsigned>(stats.namespace_count));
+
+    if (stats.free_entries < 128) {
+        ESP_LOGE(TAG, "ot_nvs has too few free entries for OpenThread dataset save");
+        return ESP_ERR_NVS_NOT_ENOUGH_SPACE;
+    }
+
+    return ESP_OK;
+}
+
+static void log_ot_nvs_after_dataset_save() {
+    nvs_stats_t stats = {};
+    const esp_err_t err = nvs_get_stats("ot_nvs", &stats);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Cannot read ot_nvs stats after dataset save: %s", esp_err_to_name(err));
+        return;
+    }
+
+    ESP_LOGI(TAG, "ot_nvs after dataset save: used=%u free=%u total=%u namespaces=%u",
+             static_cast<unsigned>(stats.used_entries),
+             static_cast<unsigned>(stats.free_entries),
+             static_cast<unsigned>(stats.total_entries),
+             static_cast<unsigned>(stats.namespace_count));
 }
 
 esp_err_t thread_dataset_init(const uint16_t channel, const uint16_t pan_id, const char *network_name,
@@ -134,14 +174,14 @@ esp_err_t thread_dataset_init(const uint16_t channel, const uint16_t pan_id, con
     if (otNetworkNameFromString(&dataset->mNetworkName, network_name) != OT_ERROR_NONE) {
         free(dataset);
         esp_openthread_lock_release();
-        return ESP_FAIL;
+        return ESP_ERR_INVALID_ARG;
     }
     dataset->mComponents.mIsNetworkNamePresent = true;
 
     if (hex_string_to_bytes(extended_pan_id, dataset->mExtendedPanId.m8, sizeof(dataset->mExtendedPanId.m8)) != sizeof(dataset->mExtendedPanId.m8)) {
         free(dataset);
         esp_openthread_lock_release();
-        return ESP_FAIL;
+        return ESP_ERR_INVALID_ARG;
     }
     dataset->mComponents.mIsExtendedPanIdPresent = true;
 
@@ -155,18 +195,31 @@ esp_err_t thread_dataset_init(const uint16_t channel, const uint16_t pan_id, con
     if (hex_string_to_bytes(network_key, dataset->mNetworkKey.m8, sizeof(dataset->mNetworkKey.m8)) != sizeof(dataset->mNetworkKey.m8)) {
         free(dataset);
         esp_openthread_lock_release();
-        return ESP_FAIL;
+        return ESP_ERR_INVALID_ARG;
     }
     dataset->mComponents.mIsNetworkKeyPresent = true;
 
     if (hex_string_to_bytes(pskc, dataset->mPskc.m8, sizeof(dataset->mPskc.m8)) != sizeof(dataset->mPskc.m8)) {
         free(dataset);
         esp_openthread_lock_release();
-        return ESP_FAIL;
+        return ESP_ERR_INVALID_ARG;
     }
     dataset->mComponents.mIsPskcPresent = true;
 
-    esp_err_t result = (otDatasetSetActive(instance, dataset) == OT_ERROR_NONE) ? ESP_OK : ESP_FAIL;
+    esp_err_t result = ensure_ot_nvs_capacity();
+    if (result == ESP_OK) {
+        const otError ot_err = otDatasetSetActive(instance, dataset);
+        if (ot_err == OT_ERROR_NONE) {
+            result = ESP_OK;
+        } else if (ot_err == OT_ERROR_NO_BUFS) {
+            ESP_LOGE(TAG, "otDatasetSetActive failed with OT_ERROR_NO_BUFS");
+            result = ESP_ERR_NVS_NOT_ENOUGH_SPACE;
+        } else {
+            ESP_LOGE(TAG, "otDatasetSetActive failed: %d", static_cast<int>(ot_err));
+            result = ESP_FAIL;
+        }
+        log_ot_nvs_after_dataset_save();
+    }
 
     free(dataset);
     esp_openthread_lock_release();

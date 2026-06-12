@@ -17,9 +17,11 @@ static void ot_task_worker(void * context)
     // The function will not return unless an error occurs during OpenThread stack execution
     esp_openthread_launch_mainloop();
 
-    // Clean up OpenThread resources
-    esp_openthread_deinit();
-    esp_openthread_netif_glue_deinit();
+    // The ESP-IDF OpenThread mainloop only returns on a platform error. Calling
+    // esp_openthread_deinit() from this path can assert if the stack is already
+    // unwinding without the task-switching lock. Keep the process alive so AP/WSS
+    // can report the fault and accept recovery commands instead of rebooting.
+    ESP_LOGE(TAG, "OpenThread main loop exited unexpectedly; leaving stack resources allocated");
 
     // Delete the task
     vTaskDelete(nullptr);
@@ -54,6 +56,8 @@ esp_err_t thread_interface_init(const esp_event_handler_t event_handler)
 
     // Attach OpenThread network interface to ESP-NETIF
     esp_openthread_platform_config_t ot_platform_config = ESP_OPENTHREAD_DEFAULT_CONFIG();
+    ESP_LOGI(TAG, "OpenThread settings storage partition: %s",
+             ot_platform_config.port_config.storage_partition_name);
     err = esp_netif_attach(netif, esp_openthread_netif_glue_init(&ot_platform_config));
     if (err != ESP_OK)
     {
