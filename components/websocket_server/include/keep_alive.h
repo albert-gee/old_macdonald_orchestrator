@@ -59,9 +59,7 @@ typedef struct {
      * set according to the complexity of the task and the available system
      * resources.
      *
-     * - A minimum stack size of 2048 bytes is enforced by default. If a
-     *   smaller value is provided, it will be increased to 4096 bytes
-     *   automatically to ensure proper functioning.
+     * - A minimum stack size of 8192 bytes is enforced by default.
      * - In scenarios where memory constraints are not an issue, a higher
      *   stack size can be set to accommodate advanced operations or
      *   additional tasks performed by the keep-alive task.

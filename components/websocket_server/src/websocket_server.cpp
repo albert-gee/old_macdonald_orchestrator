@@ -2,14 +2,23 @@
 #include <esp_log.h>
 #include <esp_https_server.h>
 #include <esp_timer.h>
+#include <esp_heap_caps.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#include <inttypes.h>
 #include <unistd.h>
 #include "keep_alive.h"
 
 // Max number of clients that can connect to the WebSocket server simultaneously.
-constexpr int MAX_CLIENTS = 10;
+// The Orchestrator is an embedded control endpoint; keeping this small leaves
+// internal heap available for BLE/Matter commissioning.
+constexpr int MAX_CLIENTS = 2;
+constexpr size_t HTTPS_SERVER_STACK_SIZE = 8192;
 
 // URI path for the WebSocket server endpoint.
 constexpr char WEBSOCKET_URI[] = "/ws";
+
+static const char *TAG = "websocket_server";
 
 // Static instance of the HTTP server.
 static httpd_handle_t server = nullptr;
@@ -20,6 +29,7 @@ static ws_client_event_handler_t client_event_handler = nullptr;
 
 // Static variable to manage and monitor websocket client connections for the server.
 static wss_keep_alive_t keep_alive = nullptr;
+static SemaphoreHandle_t send_mutex = nullptr;
 
 // The start address of the server certificate in PEM format.
 extern const char servercert_pem_start[] asm("_binary_servercert_pem_start");
@@ -52,6 +62,35 @@ static void free_async_send_arg(AsyncSendArg *arg) {
     free(arg);
 }
 
+static void *malloc_psram_first(size_t size) {
+    void *ptr = heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    return ptr ? ptr : malloc(size);
+}
+
+static void *calloc_psram_first(size_t count, size_t size) {
+    void *ptr = heap_caps_calloc(count, size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    return ptr ? ptr : calloc(count, size);
+}
+
+static char *strdup_psram_first(const char *message) {
+    if (!message) return nullptr;
+    const size_t len = strlen(message) + 1;
+    auto *copy = static_cast<char *>(malloc_psram_first(len));
+    if (!copy) return nullptr;
+    memcpy(copy, message, len);
+    return copy;
+}
+
+static esp_err_t send_ws_frame_locked(httpd_handle_t handle, int fd, httpd_ws_frame_t *frame) {
+    if (!send_mutex) return httpd_ws_send_frame_async(handle, fd, frame);
+    if (xSemaphoreTake(send_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+    const esp_err_t err = httpd_ws_send_frame_async(handle, fd, frame);
+    xSemaphoreGive(send_mutex);
+    return err;
+}
+
 /**
  * @brief Asynchronously sends a WebSocket message to a client.
  *
@@ -71,7 +110,7 @@ static void async_send_task(void *arg) {
         .payload = reinterpret_cast<uint8_t *>(send_arg->message),
         .len = strlen(send_arg->message)
     };
-    httpd_ws_send_frame_async(send_arg->httpd_handle, send_arg->client_fd, &frame);
+    send_ws_frame_locked(send_arg->httpd_handle, send_arg->client_fd, &frame);
     free_async_send_arg(send_arg);
 }
 
@@ -105,6 +144,9 @@ static httpd_ssl_config_t create_ssl_config() {
     httpd_ssl_config_t config = HTTPD_SSL_CONFIG_DEFAULT();
     config.httpd.global_user_ctx = keep_alive;
     config.httpd.close_fn = &on_client_close;
+    config.httpd.max_open_sockets = MAX_CLIENTS;
+    config.httpd.stack_size = HTTPS_SERVER_STACK_SIZE;
+    config.httpd.task_caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
     config.servercert = reinterpret_cast<const uint8_t *>(servercert_pem_start);
     config.servercert_len = servercert_pem_end - servercert_pem_start;
     config.prvtkey_pem = reinterpret_cast<const uint8_t *>(prvtkey_pem_start);
@@ -126,12 +168,12 @@ static httpd_ssl_config_t create_ssl_config() {
 static bool send_ping_to_client(wss_keep_alive_t h, const int fd) {
     auto *hd = wss_keep_alive_get_user_ctx(h);
     httpd_ws_frame_t ping = {.type = HTTPD_WS_TYPE_PING, .payload = nullptr, .len = 0};
-    esp_err_t err = httpd_ws_send_frame_async(hd, fd, &ping);
+    esp_err_t err = send_ws_frame_locked(hd, fd, &ping);
     if (err != ESP_OK) {
-        ESP_LOGE("websocket_server", "Failed to send ping to fd=%d: %s", fd, esp_err_to_name(err));
+        ESP_LOGE(TAG, "Failed to send ping to fd=%d: %s", fd, esp_err_to_name(err));
         return false;
     }
-    ESP_LOGD("websocket_server", "Ping sent to fd=%d", fd);
+    ESP_LOGD(TAG, "Ping sent to fd=%d", fd);
     return true;
 }
 
@@ -144,9 +186,9 @@ static bool send_pong_to_client(httpd_handle_t server_handle, const int fd) {
         .len = 0
     };
 
-    const esp_err_t err = httpd_ws_send_frame_async(server_handle, fd, &pong);
+    const esp_err_t err = send_ws_frame_locked(server_handle, fd, &pong);
     if (err != ESP_OK) {
-        ESP_LOGE("websocket_server", "Failed to send pong to fd=%d: %s", fd, esp_err_to_name(err));
+        ESP_LOGE(TAG, "Failed to send pong to fd=%d: %s", fd, esp_err_to_name(err));
         return false;
     }
 
@@ -171,13 +213,13 @@ static void process_frame(const httpd_ws_frame_t &frame, const int fd) {
             break;
 
         case HTTPD_WS_TYPE_PING:
-            ESP_LOGD("websocket_server", "Received ping from fd=%d", fd);
+            ESP_LOGD(TAG, "Received ping from fd=%d", fd);
             wss_keep_alive_client_is_active(keep_alive, fd);
             send_pong_to_client(server, fd);
             break;
 
         case HTTPD_WS_TYPE_PONG:
-            ESP_LOGD("websocket_server", "Received pong from fd=%d", fd);
+            ESP_LOGD(TAG, "Received pong from fd=%d", fd);
             wss_keep_alive_client_is_active(keep_alive, fd);
             break;
 
@@ -189,7 +231,7 @@ static void process_frame(const httpd_ws_frame_t &frame, const int fd) {
             break;
 
         default:
-            ESP_LOGW("websocket_server", "Unhandled frame type: %d", frame.type);
+            ESP_LOGW(TAG, "Unhandled frame type: %d", frame.type);
             break;
     }
 }
@@ -213,16 +255,23 @@ static esp_err_t receive_and_handle_frame(httpd_req_t *req) {
     httpd_ws_frame_t frame = {};
     esp_err_t ret = httpd_ws_recv_frame(req, &frame, 0);
     if (ret != ESP_OK) {
-        ESP_LOGE("websocket_server", "Failed to receive frame header: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to receive frame header: %s", esp_err_to_name(ret));
         return ret;
     }
 
-    ESP_LOGD("websocket_server", "Received frame: type=%d, len=%d", frame.type, frame.len);
+    ESP_LOGD(TAG, "Received frame: type=%d, len=%d", frame.type, frame.len);
 
     if (frame.len > 0) {
-        auto *buf = static_cast<uint8_t *>(calloc(1, frame.len + 1));
+        auto *buf = static_cast<uint8_t *>(calloc_psram_first(1, frame.len + 1));
         if (!buf) {
-            ESP_LOGE("websocket_server", "Memory allocation failed for payload");
+            ESP_LOGE(TAG,
+                     "Memory allocation failed for payload len=%d internal_free=%zu internal_largest=%zu "
+                     "spiram_free=%zu spiram_largest=%zu",
+                     frame.len,
+                     heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                     heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                     heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT),
+                     heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
             return ESP_ERR_NO_MEM;
         }
         frame.payload = buf;
@@ -230,7 +279,7 @@ static esp_err_t receive_and_handle_frame(httpd_req_t *req) {
         if (ret == ESP_OK) {
             process_frame(frame, httpd_req_to_sockfd(req));
         } else {
-            ESP_LOGE("websocket_server", "Failed to receive payload: %s", esp_err_to_name(ret));
+            ESP_LOGE(TAG, "Failed to receive payload: %s", esp_err_to_name(ret));
         }
         free(buf);
     } else {
@@ -255,7 +304,7 @@ static esp_err_t websocket_handler(httpd_req_t *req) {
     const int fd = httpd_req_to_sockfd(req);
 
     if (req->method == HTTP_GET) {
-        ESP_LOGI("websocket_server", "Client connected: fd=%d", fd);
+        ESP_LOGI(TAG, "Client connected: fd=%d", fd);
         wss_keep_alive_add_client(keep_alive, fd);
         if (client_event_handler) {
             client_event_handler(WS_CLIENT_CONNECTED, fd);
@@ -268,7 +317,7 @@ static esp_err_t websocket_handler(httpd_req_t *req) {
 esp_err_t websocket_server_start(const websocket_server_handlers_t *handlers) {
     // Prevent starting if the server is already running
     if (server) {
-        ESP_LOGW("websocket_server", "WebSocket server already running");
+        ESP_LOGW(TAG, "WebSocket server already running");
         return ESP_OK;
     }
 
@@ -278,6 +327,41 @@ esp_err_t websocket_server_start(const websocket_server_handlers_t *handlers) {
     }
     message_handler = handlers->message_handler;
     client_event_handler = handlers->client_event_handler;
+    if (!send_mutex) {
+        send_mutex = xSemaphoreCreateMutex();
+        if (!send_mutex) {
+            message_handler = nullptr;
+            client_event_handler = nullptr;
+            return ESP_ERR_NO_MEM;
+        }
+    }
+
+    // The HTTPS task stack must be internal because request handlers can read
+    // NVS/flash while cache is disabled.
+    httpd_ssl_config_t ssl_cfg = create_ssl_config();
+    ESP_LOGI(TAG,
+             "Starting HTTPS server: stack=%zu caps=0x%08" PRIx32 " internal_free=%zu internal_largest=%zu "
+             "spiram_free=%zu spiram_largest=%zu",
+             ssl_cfg.httpd.stack_size,
+             static_cast<uint32_t>(ssl_cfg.httpd.task_caps),
+             heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT),
+             heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    esp_err_t ret = httpd_ssl_start(&server, &ssl_cfg);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG,
+                 "Failed to start HTTPS server: %s internal_free=%zu internal_largest=%zu "
+                 "spiram_free=%zu spiram_largest=%zu",
+                 esp_err_to_name(ret),
+                 heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                 heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                 heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT),
+                 heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        vSemaphoreDelete(send_mutex);
+        send_mutex = nullptr;
+        return ret;
+    }
 
     // Configure keep-alive: handle inactive clients and ping checking
     wss_keep_alive_config_t ka_cfg = KEEP_ALIVE_CONFIG_DEFAULT();
@@ -290,20 +374,19 @@ esp_err_t websocket_server_start(const websocket_server_handlers_t *handlers) {
         // Send ping to verify if a client is alive
         return send_ping_to_client(h, fd);
     };
+    ka_cfg.max_clients = MAX_CLIENTS;
 
     // Start the keep-alive monitor
     keep_alive = wss_keep_alive_start(&ka_cfg);
-
-    // Configure and start the HTTPS WebSocket server
-    httpd_ssl_config_t ssl_cfg = create_ssl_config();
-    esp_err_t ret = httpd_ssl_start(&server, &ssl_cfg);
-    if (ret != ESP_OK) {
-        if (keep_alive) {
-            wss_keep_alive_stop(keep_alive);
-            keep_alive = nullptr;
-        }
-        return ret;
+    if (!keep_alive) {
+        httpd_handle_t server_to_stop = server;
+        server = nullptr;
+        httpd_ssl_stop(server_to_stop);
+        vSemaphoreDelete(send_mutex);
+        send_mutex = nullptr;
+        return ESP_ERR_NO_MEM;
     }
+    wss_keep_alive_set_user_ctx(keep_alive, server);
 
     // Define WebSocket URI handler
     static constexpr httpd_uri_t ws_uri = {
@@ -315,8 +398,17 @@ esp_err_t websocket_server_start(const websocket_server_handlers_t *handlers) {
     };
 
     // Register the URI handler and link it to the keep-alive context
-    httpd_register_uri_handler(server, &ws_uri);
-    wss_keep_alive_set_user_ctx(keep_alive, server);
+    ret = httpd_register_uri_handler(server, &ws_uri);
+    if (ret != ESP_OK) {
+        wss_keep_alive_stop(keep_alive);
+        keep_alive = nullptr;
+        httpd_handle_t server_to_stop = server;
+        server = nullptr;
+        httpd_ssl_stop(server_to_stop);
+        vSemaphoreDelete(send_mutex);
+        send_mutex = nullptr;
+        return ret;
+    }
 
     return ESP_OK;
 }
@@ -324,7 +416,7 @@ esp_err_t websocket_server_start(const websocket_server_handlers_t *handlers) {
 esp_err_t websocket_server_stop() {
     // Prevent stopping if the server is not running
     if (!server) {
-        ESP_LOGW("websocket_server", "WebSocket server is not running");
+        ESP_LOGW(TAG, "WebSocket server is not running");
         return ESP_OK;
     }
 
@@ -340,11 +432,15 @@ esp_err_t websocket_server_stop() {
     // Stop HTTPS server
     const esp_err_t ret = httpd_ssl_stop(server_to_stop);
     if (ret != ESP_OK) {
-        ESP_LOGE("websocket_server", "Failed to stop WebSocket server: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to stop WebSocket server: %s", esp_err_to_name(ret));
     }
 
     message_handler = nullptr;
     client_event_handler = nullptr;
+    if (send_mutex) {
+        vSemaphoreDelete(send_mutex);
+        send_mutex = nullptr;
+    }
     return ret;
 }
 
@@ -357,19 +453,41 @@ esp_err_t websocket_send_message_to_client(const int fd, const char *message) {
     if (!server || !message) return ESP_ERR_INVALID_ARG;
 
     // Allocate and prepare an async send task
-    auto *arg = static_cast<AsyncSendArg *>(malloc(sizeof(AsyncSendArg)));
-    if (!arg) return ESP_ERR_NO_MEM;
+    auto *arg = static_cast<AsyncSendArg *>(calloc_psram_first(1, sizeof(AsyncSendArg)));
+    if (!arg) {
+        ESP_LOGE(TAG,
+                 "Failed to allocate async send metadata internal_free=%zu internal_largest=%zu "
+                 "spiram_free=%zu spiram_largest=%zu",
+                 heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                 heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                 heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT),
+                 heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+        return ESP_ERR_NO_MEM;
+    }
 
     arg->httpd_handle = server;
     arg->client_fd = fd;
-    arg->message = strdup(message);
+    arg->message = strdup_psram_first(message);
     if (!arg->message) {
+        ESP_LOGE(TAG,
+                 "Failed to allocate async send payload len=%zu internal_free=%zu internal_largest=%zu "
+                 "spiram_free=%zu spiram_largest=%zu",
+                 strlen(message),
+                 heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                 heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                 heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT),
+                 heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
         free(arg);
         return ESP_ERR_NO_MEM;
     }
 
     // Queue task for asynchronous WebSocket transmission
-    return httpd_queue_work(server, async_send_task, arg);
+    esp_err_t err = httpd_queue_work(server, async_send_task, arg);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to queue async WSS send to fd=%d: %s", fd, esp_err_to_name(err));
+        free_async_send_arg(arg);
+    }
+    return err;
 }
 
 esp_err_t websocket_broadcast_message(const char *message) {

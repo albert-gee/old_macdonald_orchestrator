@@ -1,11 +1,13 @@
 #include "keep_alive.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_heap_caps.h"
 #include <cstring>
 #include "freertos/FreeRTOS.h"
 #include "FreeRTOSConfig.h"
 #include "portmacro.h"
 #include "freertos/task.h"
+#include "freertos/idf_additions.h"
 #include "freertos/projdefs.h"
 #include "freertos/queue.h"
 
@@ -277,22 +279,24 @@ static void keep_alive_task(void *arg) {
         }
     }
 
-    vQueueDelete(h->q);
+    vQueueDeleteWithCaps(h->q);
     free(h);
-    vTaskDelete(nullptr);
+    vTaskDeleteWithCaps(nullptr);
 }
 
 wss_keep_alive_t wss_keep_alive_start(wss_keep_alive_config_t *config) {
-    if (config->task_stack_size < 4096) {
+    if (config->task_stack_size < 8192) {
         ESP_LOGW(TAG, "Increasing task stack size to 8192");
         config->task_stack_size = 8192;
     }
 
-    const size_t queue_size = config->max_clients / 2;
+    const size_t queue_size = config->max_clients + 2;
     const size_t client_list_size = config->max_clients + queue_size;
 
     auto *h = static_cast<wss_keep_alive_storage *>(
-        calloc(1, sizeof(wss_keep_alive_storage) + client_list_size * sizeof(client_fd_action_t))
+        heap_caps_calloc(1,
+                         sizeof(wss_keep_alive_storage) + client_list_size * sizeof(client_fd_action_t),
+                         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
     );
     if (!h) return nullptr;
 
@@ -302,12 +306,17 @@ wss_keep_alive_t wss_keep_alive_start(wss_keep_alive_config_t *config) {
     h->keep_alive_period_ms = config->keep_alive_period_ms;
     h->not_alive_after_ms = config->not_alive_after_ms;
     h->user_ctx = config->user_ctx;
-    h->q = xQueueCreate(queue_size, sizeof(client_fd_action_t));
+    h->q = xQueueCreateWithCaps(queue_size, sizeof(client_fd_action_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 
-    if (!h->q || xTaskCreate(keep_alive_task, "keep_alive_task", config->task_stack_size, h, config->task_prio,
-                             nullptr) != pdPASS) {
+    if (!h->q || xTaskCreateWithCaps(keep_alive_task,
+                                     "keep_alive_task",
+                                     config->task_stack_size,
+                                     h,
+                                     config->task_prio,
+                                     nullptr,
+                                     MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
         ESP_LOGE(TAG, "Failed to start keep_alive task");
-        if (h->q) vQueueDelete(h->q);
+        if (h->q) vQueueDeleteWithCaps(h->q);
         free(h);
         return nullptr;
     }
