@@ -4,6 +4,7 @@
 #include <esp_err.h>
 #include <esp_matter_controller_utils.h>
 #include <esp_matter_core.h>
+#include <esp_netif_ip_addr.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -29,6 +30,25 @@ esp_err_t matter_controller_init(uint64_t node_id, uint64_t fabric_id, uint16_t 
  */
 esp_err_t pairing_ble_thread(uint64_t node_id, uint32_t pin, uint16_t discriminator, uint8_t *dataset_tlvs,
                              size_t dataset_len);
+
+/**
+ * @brief Commission a Matter Wi-Fi device using BLE rendezvous.
+ *
+ * @param node_id        Unique node identifier to assign.
+ * @param pin            Setup passcode.
+ * @param discriminator  Device discriminator.
+ * @param ssid           Wi-Fi SSID to provision.
+ * @param password       Wi-Fi password to provision.
+ * @return esp_err_t     ESP_OK if commissioning was accepted by the controller.
+ */
+esp_err_t pairing_ble_wifi(uint64_t node_id, uint32_t pin, uint16_t discriminator, const char *ssid,
+                           const char *password);
+
+void matter_controller_prepare_wifi_operational_address_hint(uint64_t node_id, uint16_t port);
+void matter_controller_prepare_thread_operational_address_hint(uint64_t node_id, uint16_t port);
+void matter_controller_prepare_operational_address_hint(uint64_t node_id, const char *ip, uint16_t port);
+void matter_controller_note_ap_sta_ip(const esp_ip4_addr_t *ip);
+void matter_controller_clear_wifi_operational_address_hint(void);
 
 /**
  * @brief Invoke a command on a Matter cluster.
